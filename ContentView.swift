@@ -27,6 +27,9 @@ struct ContentView: View {
     @Binding var resetScroll: Bool
     @Namespace private var statusAnim
     @State private var now: Date = Date()
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var lastBlockType: String = "work" // "work" or "break"
+    @State private var blockStartTime: Date = Date()
     
     private let darkPurple = Color(red: 0.4, green: 0.0, blue: 0.7)
     
@@ -48,6 +51,13 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.black.ignoresSafeArea())
         .onAppear {
+            // Clear saved timer state on cold launch
+            UserDefaults.standard.removeObject(forKey: "lastBackgroundedDate")
+            UserDefaults.standard.removeObject(forKey: "workTimerValue")
+            UserDefaults.standard.removeObject(forKey: "breakTimerValue")
+            UserDefaults.standard.removeObject(forKey: "isPausedByUser")
+            UserDefaults.standard.removeObject(forKey: "lastBlockType")
+            UserDefaults.standard.removeObject(forKey: "blockStartTime")
             if !isPausedByUser { startTimerIfNeeded() }
             timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
                 now = Date()
@@ -68,6 +78,13 @@ struct ContentView: View {
             }
         }
         .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in updateTimerState() }
+        .onChange(of: scenePhase) { newPhase in
+            if newPhase == .background || newPhase == .inactive {
+                saveAppState()
+            } else if newPhase == .active {
+                restoreAppState()
+            }
+        }
     }
     
     private var timelineSection: some View {
@@ -113,8 +130,24 @@ struct ContentView: View {
                 Spacer()
 
                 VStack(spacing: 1) {
-                    TimerDisplayView(timeValue: workTime, isActive: activeWork, color: Color(red: 0.6, green: 0.1, blue: 1.0))
-                    TimerDisplayView(timeValue: breakTime, isActive: activeBreak, color: Color(red: 0.1, green: 0.4, blue: 1.0))
+                    HStack(spacing: 6) {
+                        if activeWork {
+                            Rectangle()
+                                .fill(Color(red: 0.6, green: 0.1, blue: 1.0))
+                                .frame(width: 5, height: 22)
+                                .cornerRadius(2)
+                        }
+                        TimerDisplayView(timeValue: workTime, isActive: activeWork, color: Color(red: 0.6, green: 0.1, blue: 1.0), showBullet: false)
+                    }
+                    HStack(spacing: 6) {
+                        if activeBreak {
+                            Rectangle()
+                                .fill(Color(red: 0.1, green: 0.4, blue: 1.0))
+                                .frame(width: 5, height: 22)
+                                .cornerRadius(2)
+                        }
+                        TimerDisplayView(timeValue: breakTime, isActive: activeBreak, color: Color(red: 0.1, green: 0.4, blue: 1.0), showBullet: false)
+                    }
                 }
                 .padding(.top, 2)
                 .padding(.trailing, 15)
@@ -157,7 +190,7 @@ struct ContentView: View {
     }
     private var currentDayDate: String {
         let formatter = DateFormatter()
-        formatter.dateFormat = "EEEE, MMM d"
+        formatter.dateFormat = "EEEE, MMMd"
         return formatter.string(from: Date())
     }
 
@@ -224,6 +257,41 @@ struct ContentView: View {
             timerRunning = false
             timerColor = timerDefaultColor
             lastWorkBlockId = nil
+        }
+    }
+
+    // --- State Persistence ---
+    private func saveAppState() {
+        let defaults = UserDefaults.standard
+        defaults.set(Date(), forKey: "lastBackgroundedDate")
+        defaults.set(workTimerValue, forKey: "workTimerValue")
+        defaults.set(breakTimerValue, forKey: "breakTimerValue")
+        defaults.set(isPausedByUser, forKey: "isPausedByUser")
+        defaults.set(lastBlockType, forKey: "lastBlockType")
+        defaults.set(blockStartTime, forKey: "blockStartTime")
+    }
+
+    private func restoreAppState() {
+        let defaults = UserDefaults.standard
+        if let lastDate = defaults.object(forKey: "lastBackgroundedDate") as? Date {
+            let elapsed = Date().timeIntervalSince(lastDate)
+            let wasPaused = defaults.bool(forKey: "isPausedByUser")
+            let lastType = defaults.string(forKey: "lastBlockType") ?? "work"
+            let blockStart = defaults.object(forKey: "blockStartTime") as? Date ?? Date()
+            if !wasPaused {
+                if lastType == "work" {
+                    workTimerValue = defaults.double(forKey: "workTimerValue") + elapsed
+                } else {
+                    breakTimerValue = defaults.double(forKey: "breakTimerValue") + elapsed
+                }
+                blockStartTime = blockStart.addingTimeInterval(elapsed)
+            } else {
+                workTimerValue = defaults.double(forKey: "workTimerValue")
+                breakTimerValue = defaults.double(forKey: "breakTimerValue")
+                blockStartTime = blockStart
+            }
+            isPausedByUser = wasPaused
+            lastBlockType = lastType
         }
     }
 }
@@ -636,20 +704,28 @@ struct TimerDisplayView: View {
     let timeValue: TimeInterval
     let isActive: Bool
     let color: Color
+    var showBullet: Bool = true
     var body: some View {
         let hours = Int(timeValue) / 3600
         let minutes = (Int(timeValue) % 3600) / 60
         let seconds = Int(timeValue) % 60
         let timeString: String = hours > 0 ? String(format: "%02d:%02d", hours, minutes) : String(format: "%02d:%02d", minutes, seconds)
-        return Text(timeString)
-            .font(.system(size: 22, weight: .bold, design: .monospaced))
-            .foregroundColor(isActive ? color : Color.gray)
-            .shadow(color: isActive ? color.opacity(0.7) : .clear, radius: 6, x: 0, y: 0)
-            .frame(width: 100, alignment: .trailing)
-            .padding(.vertical, 4)
-            //.background(
-            //    RoundedRectangle(cornerRadius: 12)
-            //        .fill(Color.white.opacity(isActive ? 0.08 : 0.03))
-            //)
+        HStack(spacing: 8) {
+            if showBullet && isActive {
+                GeometryReader { geo in
+                    Circle()
+                        .fill(color)
+                        .frame(width: geo.size.height / 2, height: geo.size.height / 2)
+                        .position(x: geo.size.height / 4, y: geo.size.height / 2)
+                }
+                .frame(width: 16, height: 22) // Adjust as needed
+            }
+            Text(timeString)
+                .font(.system(size: 22, weight: .bold, design: .monospaced))
+                .foregroundColor(isActive ? color : Color.gray)
+                .shadow(color: isActive ? color.opacity(0.7) : .clear, radius: 6, x: 0, y: 0)
+                .frame(width: 70, alignment: .trailing)
+                .padding(.vertical, 4)
+        }
     }
 }

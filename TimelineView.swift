@@ -81,45 +81,43 @@ struct TimelineView<Content: View>: View {
         }
     }
     
-    // MARK: - Private helpers
+    // MARK: - Private helpers      (root view)
     @ViewBuilder
     private func timelineContent() -> some View {
         ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
-                GeometryReader { geo in
-                    Color.clear.onAppear { scrollProxyRef = proxy }
-                    let now = Date()
-                    HStack(alignment: .top, spacing: 0) {
-                        HourLabels(
-                            slots: slotsInDay,
-                            hourHeight: hourHeight,
-                            formatter: formatHour
-                        )
+                Color.clear.onAppear { scrollProxyRef = proxy }
+                let now = Date()
+                HStack(alignment: .top, spacing: 0) {
+                    HourLabels(
+                        slots: slotsInDay,
+                        hourHeight: hourHeight,
+                        formatter: formatHour
+                    )
+                    .frame(width: 54) // Fixed width for time labels
 
-                        ZStack(alignment: .top) {
-                            GridLines(slots: slotsInDay, hourHeight: hourHeight)
-                            TaskLayer(
-                                tasks: tasks.sorted { $0.startTime < $1.startTime },
-                                now: now,
-                                geometry: geo,
-                                hourHeight: hourHeight,
-                                content: content,
-                                isPausedByUser: isPausedByUser
-                            )
-                            Color.clear
-                                .frame(height: 1)
-                                .alignmentGuide(.top) { _ in -timeToPosition(now) }
-                                .id("currentTime")
-                            Rectangle()
-                                .fill(Color(red: 1, green: 0.84, blue: 0))
-                                .frame(height: 2)
-                                .offset(y: timeToPosition(now))
-                                .zIndex(1)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .top)
+                    ZStack(alignment: .top) {
+                        GridLines(slots: slotsInDay, hourHeight: hourHeight)
+                        TaskLayer(
+                            tasks: tasks.sorted { $0.startTime < $1.startTime },
+                            now: now,
+                            hourHeight: hourHeight,
+                            content: content,
+                            isPausedByUser: isPausedByUser
+                        )
+                        Color.clear
+                            .frame(height: 1)
+                            .alignmentGuide(.top) { _ in -timeToPosition(now) }
+                            .id("currentTime")
+                        Rectangle()
+                            .fill(Color(red: 1, green: 0.84, blue: 0))
+                            .frame(height: 2)
+                            .offset(y: timeToPosition(now))
+                            .zIndex(1)
                     }
-                    .padding(.horizontal, 8)
+                    .frame(maxWidth: .infinity, alignment: .top)
                 }
+                .padding(.horizontal, 8)
             }
         }
     }
@@ -228,7 +226,7 @@ private struct HourLabels: View {
                             .font(.system(size: 12.4, weight: .bold, design: .monospaced))
                             .foregroundColor(.white)
                             .frame(width: 54, alignment: .trailing)
-                            .offset(y: -7)
+                            .offset(y: -30)
                     }
                 }
                 .frame(height: hourHeight/2)
@@ -241,7 +239,6 @@ private struct HourLabels: View {
 private struct TaskLayer<Content: View>: View {
     let tasks: [ScheduleTask]
     let now: Date
-    let geometry: GeometryProxy
     let hourHeight: CGFloat
     let content: (ScheduleTask, Date, Bool, Bool) -> Content
     let isPausedByUser: Bool
@@ -253,8 +250,8 @@ private struct TaskLayer<Content: View>: View {
                 cal.compare(now, to: task.endTime,   toGranularity: .minute) == .orderedAscending
             content(task, now, /*debugMode*/ false,
                     isPausedByUser && isCurrent && task.category == .focus)
-                .frame(width: geometry.size.width - 40 - 32,
-                       height: CGFloat(task.duration/3600)*hourHeight)
+                .frame(maxWidth: .infinity)
+                .frame(height: CGFloat(task.duration/3600)*hourHeight)
                 .offset(y: timeToPosition(task.startTime, hourHeight: hourHeight))
                 .padding(.vertical, 3)
         }

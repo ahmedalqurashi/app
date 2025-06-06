@@ -15,6 +15,8 @@ struct MainTabView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
+            // Glowing edge effect
+            GlowingEdgeView(isActive: isGlowing && isCurrentTaskWorkSession)
             VStack(spacing: 0) {
                 ZStack {
                     // Timeline background pulse
@@ -64,10 +66,14 @@ struct MainTabView: View {
                 ZStack {
                     // --- TIMER APPEARS HERE ---
                     if let timerMode = currentTimerMode {
-                        TimerView(mode: timerMode, isActive: isCurrentTaskActive, resetSignal: sessionResetSignal)
-                            .offset(y: -95)
-                            //.offset(x: 1)
-                            .zIndex(2)
+                        HStack(spacing: 1) {
+                            Circle()
+                                .fill(timerMode == .work ? Color(red: 0.6, green: 0.1, blue: 1.0) : Color(red: 0.1, green: 0.4, blue: 1.0))
+                                .frame(width: 12, height: 12)
+                            TimerView(mode: timerMode, isActive: isCurrentTaskActive, resetSignal: sessionResetSignal)
+                        }
+                        .offset(y: -95)
+                        .zIndex(2)
                     }
                     // --- END TIMER ---
                     ZStack {
@@ -333,7 +339,7 @@ struct TimerView: View {
             .font(.system(size: 22, weight: .bold, design: .monospaced))
             .foregroundColor(isActive ? bodyColor : Color.gray)
             .shadow(color: isActive ? shadowColor : .clear, radius: 8, x: 0, y: 0)
-            .padding(.horizontal, 24)
+            .padding(.horizontal, 9)
             .padding(.vertical, 10)
             //.background(
              //   Capsule()
@@ -351,4 +357,16 @@ struct TimerView: View {
                 }
             }
     }
-} 
+}
+
+// struct GlowingEdgeView: View {
+//     let isActive: Bool
+
+//     var body: some View {
+//         if isActive {
+//             Color.purple.opacity(0.1)
+//                 .ignoresSafeArea()
+//                 .animation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true), value: isActive)
+//         }
+//     }
+// } 
