@@ -80,8 +80,15 @@ struct MainTabView: View {
                                     .fill(isCurrentTaskActive ? darkPurple : Color(.systemGray4))
                                     .shadow(color: isCurrentTaskActive ? darkPurple.opacity((isGlowing && !isPausedByUser) ? 0.7 : 0.3) : Color(.systemGray4).opacity(0.2), radius: isCurrentTaskActive ? ((isGlowing && !isPausedByUser) ? 24 : 10) : 10)
                             )
+                            .overlay(
+                                Circle()
+                                    .stroke(darkPurple, lineWidth: 6)
+                                    .blur(radius: 6)
+                                    .opacity(isCurrentTaskActive && isGlowing && !isPausedByUser ? 1 : 0)
+                            )
                             .scaleEffect(isCurrentTaskActive && isGlowing && !isPausedByUser ? 1.12 : 1.0)
                             .animation(isCurrentTaskActive && !isPausedByUser ? .easeInOut(duration: 1.2).repeatForever(autoreverses: true) : .default, value: isGlowing)
+                            .drawingGroup()
                     }
                     .contentShape(Circle())
                     .offset(y: (selectedTab == 0 || selectedTab == 2) ? 0 : -32)
