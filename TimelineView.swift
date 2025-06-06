@@ -32,14 +32,6 @@ struct TimelineView<Content: View>: View {
         VStack {
             timelineContent()
         }
-        .onAppear {
-            requestCentering()
-        }
-        .onChange(of: scenePhase) { phase in
-            if phase == .active {
-                requestCentering()
-            }
-        }
     }
     
     private func formatHour(_ hour: Int) -> String {
@@ -72,14 +64,6 @@ struct TimelineView<Content: View>: View {
         return formatter.string(from: date)
     }
     
-    private func requestCentering() {
-        guard let proxy = scrollProxyRef else { return }
-        DispatchQueue.main.async {
-            withAnimation(.easeInOut(duration: 0.5)) {
-                proxy.scrollTo("currentTime", anchor: .top)
-            }
-        }
-    }
     
     // MARK: - Private helpers
     @ViewBuilder
