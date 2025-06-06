@@ -42,10 +42,11 @@ struct ContentView: View {
                     activeBreak: isBreakTimerActive
                 )
                 timelineSection
-                Spacer()
             }
-            .background(Color.black.ignoresSafeArea())
+            .background(Color.black)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black.ignoresSafeArea())
         .onAppear {
             if !isPausedByUser { startTimerIfNeeded() }
             timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in

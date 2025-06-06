@@ -84,10 +84,10 @@ struct TimelineView<Content: View>: View {
     // MARK: - Private helpers
     @ViewBuilder
     private func timelineContent() -> some View {
-        GeometryReader { geo in
-            ScrollViewReader { proxy in
-                Color.clear.onAppear { scrollProxyRef = proxy }
-                ScrollView(.vertical, showsIndicators: false) {
+        ScrollViewReader { proxy in
+            ScrollView(.vertical, showsIndicators: false) {
+                GeometryReader { geo in
+                    Color.clear.onAppear { scrollProxyRef = proxy }
                     let now = Date()
                     HStack(alignment: .top, spacing: 0) {
                         HourLabels(
@@ -120,9 +120,7 @@ struct TimelineView<Content: View>: View {
                     }
                     .padding(.horizontal, 8)
                 }
-                 .ignoresSafeArea(.container, edges: .top)
             }
-            .ignoresSafeArea(.container, edges: .top)
         }
     }
 }
