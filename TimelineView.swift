@@ -76,7 +76,7 @@ struct TimelineView<Content: View>: View {
         guard let proxy = scrollProxyRef else { return }
         DispatchQueue.main.async {
             withAnimation(.easeInOut(duration: 0.5)) {
-                proxy.scrollTo("currentTime", anchor: .center)
+                proxy.scrollTo("currentTime", anchor: .top)
             }
         }
     }
@@ -108,14 +108,11 @@ struct TimelineView<Content: View>: View {
                                 content: content,
                                 isPausedByUser: isPausedByUser
                             )
-                            Color.clear
-                                .frame(height: 1)
-                                .alignmentGuide(.top) { _ in -timeToPosition(now) }
-                                .id("currentTime")
                             Rectangle()
                                 .fill(Color(red: 1, green: 0.84, blue: 0))
                                 .frame(height: 2)
                                 .offset(y: timeToPosition(now))
+                                .id("currentTime")
                                 .zIndex(1)
                         }
                         //.alignmentGuide(.top) { _ in -timeToPosition(now) } 
@@ -123,6 +120,7 @@ struct TimelineView<Content: View>: View {
                     }
                     .padding(.horizontal, 8)
                 }
+                .ignoresSafeArea(.container, edges: .top)
             }
         }
     }
@@ -200,7 +198,7 @@ private struct GridLines: View {
                     .offset(y: CGFloat(slot) * (hourHeight/2))
             } else {
                 Path { p in
-                    let y = CGFloat(slot) * (hourHeight/2) + 0.5
+                    let y = CGFloat(slot) * (hourHeight/2)
                     p.move(to: .init(x: 0, y: y))
                     p.addLine(to: .init(x: 1_000, y: y))
                 }
@@ -225,13 +223,12 @@ private struct HourLabels: View {
                         .fill(.white.opacity(0.15))
                         .frame(height: 1)
                         .frame(width: 0.1)
-                        .offset(y: 1)
                     if slot.isMultiple(of: 2) {
                         Text(formatter(hour))
                             .font(.system(size: 12.4, weight: .bold, design: .monospaced))
                             .foregroundColor(.white)
                             .frame(width: 54, alignment: .trailing)
-                            .offset(y: -7)
+                            .offset(y: -6)
                     }
                 }
                 .frame(height: hourHeight/2)
