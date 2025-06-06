@@ -76,7 +76,7 @@ struct TimelineView<Content: View>: View {
         guard let proxy = scrollProxyRef else { return }
         DispatchQueue.main.async {
             withAnimation(.easeInOut(duration: 0.5)) {
-                proxy.scrollTo("currentTime", anchor: .center)
+                proxy.scrollTo("currentTime", anchor: .top)
             }
         }
     }
@@ -95,10 +95,8 @@ struct TimelineView<Content: View>: View {
                             hourHeight: hourHeight,
                             formatter: formatHour
                         )
-                        //.alignmentGuide(.top) { _ in -timeToPosition(now) }
 
                         ZStack(alignment: .top) {
-                            //let now = Date()
                             GridLines(slots: slotsInDay, hourHeight: hourHeight)
                             TaskLayer(
                                 tasks: tasks.sorted { $0.startTime < $1.startTime },
@@ -118,12 +116,13 @@ struct TimelineView<Content: View>: View {
                                 .offset(y: timeToPosition(now))
                                 .zIndex(1)
                         }
-                        //.alignmentGuide(.top) { _ in -timeToPosition(now) } 
                         .frame(maxWidth: .infinity, alignment: .top)
                     }
                     .padding(.horizontal, 8)
                 }
+                 .ignoresSafeArea(.container, edges: .top)
             }
+            .ignoresSafeArea(.container, edges: .top)
         }
     }
 }

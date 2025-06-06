@@ -74,7 +74,8 @@ struct ContentView: View {
             let trail = taskTrails[task.id] ?? []
             TaskBlockView(task: task, hourWidth: 150, now: now, debugMode: debug, isPausedByUser: paused, trail: trail)
         }
-        .frame(maxWidth: .infinity)
+        //.frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     
     private var statusColor: Color {
