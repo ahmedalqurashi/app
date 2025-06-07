@@ -6,17 +6,15 @@ struct MainTabView: View {
     @State private var scheduledTasks: [ScheduleTask] = []
     @State private var now: Date = Date()
     @State private var timer: Timer? = nil
-    @State private var isGlowing = false
-    @State private var showBanner = false
-    @State private var isPausedByUser = false
-    @State private var taskTrails: [UUID: [(start: Date, end: Date, isFocus: Bool)]] = [:]
+    @State private var sessionState: SessionState = .none
     @State private var timelineShouldResetScroll = false
     @State private var sessionResetSignal: Int = 0
+    @State private var dragOffset: CGFloat = 0
+    @State private var previousSessionState: SessionState? = nil
+    @State private var taskTrails: [UUID: [(start: Date, end: Date, isFocus: Bool)]] = [:]
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            // Glowing edge effect
-            GlowingEdgeView(isActive: isGlowing && isCurrentTaskWorkSession)
             VStack(spacing: 0) {
                 ZStack {
                     // Timeline background pulse
@@ -29,9 +27,9 @@ struct MainTabView: View {
                     Group {
                         switch selectedTab {
                         case 0: Text("Profile").foregroundColor(.white)
-                        case 1: ContentView(scheduledTasks: $scheduledTasks, isPausedByUser: $isPausedByUser, taskTrails: taskTrails, resetScroll: $timelineShouldResetScroll)
+                        case 1: ContentView(scheduledTasks: $scheduledTasks, sessionState: $sessionState, taskTrails: taskTrails, resetScroll: $timelineShouldResetScroll)
                         case 2: Text("Settings").foregroundColor(.white)
-                        default: ContentView(scheduledTasks: $scheduledTasks, isPausedByUser: $isPausedByUser, taskTrails: taskTrails, resetScroll: $timelineShouldResetScroll)
+                        default: ContentView(scheduledTasks: $scheduledTasks, sessionState: $sessionState, taskTrails: taskTrails, resetScroll: $timelineShouldResetScroll)
                         }
                     }
                 }
@@ -64,54 +62,48 @@ struct MainTabView: View {
             )
             .overlay(
                 ZStack {
-                    // --- TIMER APPEARS HERE ---
-                    if let timerMode = currentTimerMode {
-                        HStack(spacing: 1) {
+                    if sessionState == .paused {
+                        PauseLottieView()
+                            .frame(width: 60, height: 60)
+                            .offset(y: -40)
+                            .transition(.opacity)
+                    }
+                    Image(systemName: "arrowtriangle.up.fill")
+                        .font(.system(size: 36, weight: .bold))
+                        .foregroundColor(buttonColor)
+                        .frame(width: 64, height: 64)
+                        .background(
                             Circle()
-                                .fill(timerMode == .work ? Color(red: 0.6, green: 0.1, blue: 1.0) : Color(red: 0.1, green: 0.4, blue: 1.0))
-                                .frame(width: 12, height: 12)
-                            TimerView(mode: timerMode, isActive: isCurrentTaskActive, resetSignal: sessionResetSignal)
-                        }
-                        .offset(y: -95)
-                        .zIndex(2)
-                    }
-                    // --- END TIMER ---
-                    ZStack {
-                        Image(systemName: "arrowtriangle.up.fill")
-                            .font(.system(size: 36, weight: .bold))
-                            .foregroundColor(.white)
-                            .frame(width: 64, height: 64)
-                            .background(
-                                Circle()
-                                    .fill(isCurrentTaskActive ? darkPurple : Color(.systemGray4))
-                                    .shadow(color: isCurrentTaskActive ? darkPurple.opacity((isGlowing && !isPausedByUser) ? 0.7 : 0.3) : Color(.systemGray4).opacity(0.2), radius: isCurrentTaskActive ? ((isGlowing && !isPausedByUser) ? 24 : 10) : 10)
-                            )
-                            .scaleEffect(isCurrentTaskActive && isGlowing && !isPausedByUser ? 1.12 : 1.0)
-                            .animation(isCurrentTaskActive && !isPausedByUser ? .easeInOut(duration: 1.2).repeatForever(autoreverses: true) : .default, value: isGlowing)
-                    }
-                    .contentShape(Circle())
-                    .offset(y: (selectedTab == 0 || selectedTab == 2) ? 0 : -32)
-                    .animation(.spring(response: 0.4, dampingFraction: 0.7), value: selectedTab)
-                    .onTapGesture {
-                        withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
-                            if selectedTab == 0 || selectedTab == 2 {
-                                selectedTab = 1 // Go to home
-                            } else {
-                                // Old pause/resume logic
-                                if scheduledTasks.isEmpty {
-                                    showSheet = true
-                                } else if isCurrentTaskActive && isGlowing && !isPausedByUser {
-                                    // Pause: stop glowing, set paused
-                                    isPausedByUser = true
-                                    isGlowing = false
-                                } else if isCurrentTaskActive && !isGlowing && isPausedByUser {
-                                    // Resume: start glowing, unset paused
-                                    isPausedByUser = false
-                                    isGlowing = true
+                                .fill(buttonColor)
+                                .shadow(color: isGlowing ? buttonColor.opacity(0.7) : .clear, radius: isGlowing ? 24 : 10)
+                        )
+                        .scaleEffect(isGlowing ? 1.12 : 1.0)
+                        .offset(y: buttonYOffset)
+                        .gesture(
+                            DragGesture()
+                                .onChanged { value in
+                                    dragOffset = max(0, value.translation.height)
                                 }
+                                .onEnded { value in
+                                    if dragOffset > 60 && (sessionState == .work || sessionState == .breakSession) {
+                                        previousSessionState = sessionState
+                                        sessionState = .paused
+                                    } else if dragOffset < -40 && sessionState == .paused {
+                                        sessionState = previousSessionState ?? .work
+                                    }
+                                    dragOffset = 0
+                                }
+                        )
+                        .onTapGesture {
+                            switch sessionState {
+                            case .none:
+                                showSheet = true
+                            case .work:
+                                sessionState = .breakSession
+                            case .breakSession, .paused:
+                                sessionState = .work
                             }
                         }
-                    }
                 }
             )
         }
@@ -168,7 +160,7 @@ struct MainTabView: View {
         }
         .onAppear {
             startTimer()
-            if isCurrentTaskActive && !isPausedByUser && isCurrentTaskWorkSession {
+            if isCurrentTaskActive && !sessionState.paused && isCurrentTaskWorkSession {
                 isGlowing = true
             } else {
                 isGlowing = false
@@ -178,13 +170,13 @@ struct MainTabView: View {
             stopTimer()
         }
         .onChange(of: isCurrentTaskActive) { active in
-            if active && !isPausedByUser && isCurrentTaskWorkSession {
+            if active && !sessionState.paused && isCurrentTaskWorkSession {
                 isGlowing = true
             } else {
                 isGlowing = false
             }
         }
-        .onChange(of: isPausedByUser) { paused in
+        .onChange(of: sessionState.paused) { paused in
             if paused {
                 isGlowing = false
             } else if isCurrentTaskActive && isCurrentTaskWorkSession {
@@ -192,7 +184,7 @@ struct MainTabView: View {
             }
         }
         .onChange(of: isCurrentTaskWorkSession) { isWork in
-            if isWork && isCurrentTaskActive && !isPausedByUser {
+            if isWork && isCurrentTaskActive && !sessionState.paused {
                 isGlowing = true
             }
         }
@@ -207,6 +199,16 @@ struct MainTabView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             timelineShouldResetScroll = true
         }
+        // Attach the glow overlay to the very outer container
+        .overlay(
+            GlowingEdgeView(isActive: isGlowing && isCurrentTaskWorkSession)
+                .ignoresSafeArea()
+        )
+        .overlay(
+            sessionState == .paused ?
+                Color.black.opacity(0.4).ignoresSafeArea().transition(.opacity)
+                : nil
+        )
     }
 
     private var isCurrentTaskActive: Bool {
@@ -247,7 +249,7 @@ struct MainTabView: View {
             calendar.compare(currentNow, to: task.startTime, toGranularity: .minute) != .orderedAscending &&
             calendar.compare(currentNow, to: task.endTime, toGranularity: .minute) == .orderedAscending
         }) else { return }
-        let isFocus = isGlowing && !isPausedByUser && currentTask.category == .focus
+        let isFocus = isGlowing && !sessionState.paused && currentTask.category == .focus
         let taskId = currentTask.id
         let minuteStart = calendar.date(bySetting: .second, value: 0, of: previousNow) ?? previousNow
         let minuteEnd = calendar.date(bySetting: .second, value: 0, of: currentNow) ?? currentNow
@@ -263,7 +265,7 @@ struct MainTabView: View {
     }
 
     private var currentTimerMode: TimerView.Mode? {
-        if isCurrentTaskWorkSession && !isPausedByUser {
+        if isCurrentTaskWorkSession && !sessionState.paused {
             return .work
         } else if isCurrentTaskBreakSession {
             return .breakTime
@@ -297,11 +299,30 @@ struct MainTabView: View {
         return scheduledTasks.contains { task in
             calendar.compare(now, to: task.startTime, toGranularity: .minute) != .orderedAscending &&
             calendar.compare(now, to: task.endTime, toGranularity: .minute) == .orderedAscending &&
-            (task.category == .freeTime || (task.category == .focus && isPausedByUser))
+            (task.category == .freeTime || (task.category == .focus && sessionState.paused))
         }
     }
 
     private let darkPurple = Color(red: 0.4, green: 0.0, blue: 0.7)
+
+    private var buttonColor: Color {
+        switch sessionState {
+        case .none, .paused: return Color(.systemGray4)
+        case .work: return Color.purple
+        case .breakSession: return Color.blue
+        }
+    }
+
+    private var isGlowing: Bool {
+        sessionState == .work
+    }
+
+    private var buttonYOffset: CGFloat {
+        switch sessionState {
+        case .none, .paused: return 0
+        case .work, .breakSession: return -32
+        }
+    }
 }
 
 struct TabBarButton: View {

@@ -2,7 +2,7 @@ import SwiftUI
 
 struct TimelineView<Content: View>: View {
     let tasks: [ScheduleTask]
-    let isPausedByUser: Bool
+    let sessionState: SessionState
     let content: (ScheduleTask, Date, Bool, Bool) -> Content
     let hourHeight: CGFloat = 120 //was 80
     let slotsInDay = 48 // 24 hours * 2 (every 30 minutes)
@@ -15,9 +15,9 @@ struct TimelineView<Content: View>: View {
     @Environment(\.scenePhase) private var scenePhase
     private var currentTimeMarkerID: String { "currentTime-\(Int(Date().timeIntervalSince1970))" }
     
-    init(tasks: [ScheduleTask], isPausedByUser: Bool, @ViewBuilder content: @escaping (ScheduleTask, Date, Bool, Bool) -> Content) {
+    init(tasks: [ScheduleTask], sessionState: SessionState, @ViewBuilder content: @escaping (ScheduleTask, Date, Bool, Bool) -> Content) {
         self.tasks = tasks
-        self.isPausedByUser = isPausedByUser
+        self.sessionState = sessionState
         self.content = content
     }
     
@@ -103,7 +103,7 @@ struct TimelineView<Content: View>: View {
                             now: now,
                             hourHeight: hourHeight,
                             content: content,
-                            isPausedByUser: isPausedByUser
+                            isPausedByUser: sessionState == .paused
                         )
                         Color.clear
                             .frame(height: 1)
@@ -119,6 +119,14 @@ struct TimelineView<Content: View>: View {
                 }
                 .padding(.horizontal, 8)
             }
+        }
+    }
+    
+    var timeScaleColor: Color? {
+        switch sessionState {
+        case .work: return .purple
+        case .breakSession: return .blue
+        default: return nil
         }
     }
 }
@@ -176,7 +184,7 @@ struct TimelineView_Previews: PreviewProvider {
             ScheduleTask(name: "Lunch Break", startTime: calendar.date(bySettingHour: 13, minute: 0, second: 0, of: now)!, duration: 1 * 3600, category: .freeTime),
             ScheduleTask(name: "Project Planning", startTime: calendar.date(bySettingHour: 14, minute: 0, second: 0, of: now)!, duration: 1.5 * 3600, category: .focus)
         ]
-        TimelineView(tasks: sampleTasks, isPausedByUser: false, content: { task, now, debugMode, _ in
+        TimelineView(tasks: sampleTasks, sessionState: .work, content: { task, now, debugMode, _ in
             TaskBlockView(task: task, hourWidth: 150, now: now, debugMode: debugMode, isPausedByUser: false, trail: [])
         })
     }

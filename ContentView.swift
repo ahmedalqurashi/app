@@ -10,7 +10,7 @@ import SwiftUI
 struct ContentView: View {
     let calendar = Calendar.current
     @Binding var scheduledTasks: [ScheduleTask]
-    @Binding var isPausedByUser: Bool
+    @Binding var sessionState: SessionState
     var taskTrails: [UUID: [(start: Date, end: Date, isFocus: Bool)]]
     @State private var showSheet = false
     @State private var workTimerValue: TimeInterval = 0
@@ -58,7 +58,7 @@ struct ContentView: View {
             UserDefaults.standard.removeObject(forKey: "isPausedByUser")
             UserDefaults.standard.removeObject(forKey: "lastBlockType")
             UserDefaults.standard.removeObject(forKey: "blockStartTime")
-            if !isPausedByUser { startTimerIfNeeded() }
+            if sessionState == .work || sessionState == .breakSession { startTimerIfNeeded() }
             timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
                 now = Date()
             }
@@ -68,12 +68,12 @@ struct ContentView: View {
             timer?.invalidate()
             timer = nil
         }
-        .onChange(of: scheduledTasks) { _ in if !isPausedByUser { startTimerIfNeeded() } }
-        .onChange(of: showSheet) { _ in if !isPausedByUser { startTimerIfNeeded() } }
-        .onChange(of: isPausedByUser) { paused in
-            if paused {
+        .onChange(of: scheduledTasks) { _ in if sessionState == .work || sessionState == .breakSession { startTimerIfNeeded() } }
+        .onChange(of: showSheet) { _ in if sessionState == .work || sessionState == .breakSession { startTimerIfNeeded() } }
+        .onChange(of: sessionState) { state in
+            if state == .paused {
                 stopTimer()
-            } else {
+            } else if state == .work || state == .breakSession {
                 startTimerIfNeeded()
             }
         }
@@ -88,11 +88,10 @@ struct ContentView: View {
     }
     
     private var timelineSection: some View {
-        TimelineView(tasks: scheduledTasks, isPausedByUser: isPausedByUser) { task, now, debug, paused in
+        TimelineView(tasks: scheduledTasks, sessionState: sessionState) { task, now, debug, paused in
             let trail = taskTrails[task.id] ?? []
-            TaskBlockView(task: task, hourWidth: 150, now: now, debugMode: debug, isPausedByUser: paused, trail: trail)
+            TaskBlockView(task: task, hourWidth: 150, now: now, debugMode: debug, isPausedByUser: sessionState == .paused, trail: trail)
         }
-        //.frame(maxWidth: .infinity)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     
@@ -165,7 +164,7 @@ struct ContentView: View {
             calendar.compare(now, to: t.startTime, toGranularity: .minute) != .orderedAscending &&
             calendar.compare(now, to: t.endTime, toGranularity: .minute) == .orderedAscending
         }) {
-            return currentBlock.category == .focus && !isPausedByUser
+            return currentBlock.category == .focus && sessionState == .work
         }
         return false
     }
@@ -178,7 +177,7 @@ struct ContentView: View {
             calendar.compare(now, to: t.endTime, toGranularity: .minute) == .orderedAscending
         }) {
             // Active if on a break block, or on a work block and paused
-            return currentBlock.category == .freeTime || (currentBlock.category == .focus && isPausedByUser)
+            return currentBlock.category == .freeTime || (currentBlock.category == .focus && sessionState == .breakSession)
         }
         return false
     }
@@ -235,7 +234,7 @@ struct ContentView: View {
         })
 
         if let currentBlock = currentBlock {
-            if currentBlock.category == .focus && !isPausedByUser {
+            if currentBlock.category == .focus && sessionState == .work {
                 // Work timer runs
                 if lastWorkBlockId != currentBlock.id {
                     workTimerValue = 0
@@ -244,7 +243,7 @@ struct ContentView: View {
                 timerRunning = true
                 workTimerValue += 1
                 timerColor = timerActiveColor
-            } else if currentBlock.category == .freeTime || (currentBlock.category == .focus && isPausedByUser) {
+            } else if currentBlock.category == .freeTime || (currentBlock.category == .focus && sessionState == .breakSession) {
                 // Break timer runs (including paused work session)
                 timerRunning = false
                 breakTimerValue += 1
@@ -266,7 +265,7 @@ struct ContentView: View {
         defaults.set(Date(), forKey: "lastBackgroundedDate")
         defaults.set(workTimerValue, forKey: "workTimerValue")
         defaults.set(breakTimerValue, forKey: "breakTimerValue")
-        defaults.set(isPausedByUser, forKey: "isPausedByUser")
+        defaults.set(sessionState == .paused, forKey: "isPausedByUser")
         defaults.set(lastBlockType, forKey: "lastBlockType")
         defaults.set(blockStartTime, forKey: "blockStartTime")
     }
@@ -290,7 +289,7 @@ struct ContentView: View {
                 breakTimerValue = defaults.double(forKey: "breakTimerValue")
                 blockStartTime = blockStart
             }
-            isPausedByUser = wasPaused
+            sessionState = wasPaused ? .paused : .work
             lastBlockType = lastType
         }
     }
@@ -696,7 +695,7 @@ struct TimeInputCardView_Previews: PreviewProvider {
 
 struct ContentView_Previews: PreviewProvider {
     static var previews: some View {
-        ContentView(scheduledTasks: .constant([]), isPausedByUser: .constant(false), taskTrails: [:], resetScroll: .constant(false))
+        ContentView(scheduledTasks: .constant([]), sessionState: .constant(.paused), taskTrails: [:], resetScroll: .constant(false))
     }
 }
 
