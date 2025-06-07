@@ -30,6 +30,8 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var lastBlockType: String = "work" // "work" or "break"
     @State private var blockStartTime: Date = Date()
+    @State private var selectedDate: Date = Date()
+    @State private var showDatePicker: Bool = false
     
     private let darkPurple = Color(red: 0.4, green: 0.0, blue: 0.7)
     
@@ -42,7 +44,9 @@ struct ContentView: View {
                     workTime: workTimerValue,
                     breakTime: breakTimerValue,
                     activeWork: isWorkTimerActive,
-                    activeBreak: isBreakTimerActive
+                    activeBreak: isBreakTimerActive,
+                    selectedDate: $selectedDate,
+                    showDatePicker: $showDatePicker
                 )
                 timelineSection
             }
@@ -50,6 +54,22 @@ struct ContentView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.black.ignoresSafeArea())
+        .sheet(isPresented: $showDatePicker) {
+            VStack {
+                DatePicker(
+                    "Select Date",
+                    selection: $selectedDate,
+                    displayedComponents: .date
+                )
+                .datePickerStyle(.graphical)
+                .colorScheme(.dark)
+                .background(Color.black)
+                Button("Done") { showDatePicker = false }
+                    .padding()
+            }
+            .padding()
+            .background(Color.black)
+        }
         .onAppear {
             // Clear saved timer state on cold launch
             UserDefaults.standard.removeObject(forKey: "lastBackgroundedDate")
@@ -68,27 +88,31 @@ struct ContentView: View {
             timer?.invalidate()
             timer = nil
         }
-        .onChange(of: scheduledTasks) { _ in if sessionState == .work || sessionState == .breakSession { startTimerIfNeeded() } }
-        .onChange(of: showSheet) { _ in if sessionState == .work || sessionState == .breakSession { startTimerIfNeeded() } }
-        .onChange(of: sessionState) { state in
-            if state == .paused {
+        .onChange(of: scheduledTasks) {
+            if sessionState == .work || sessionState == .breakSession { startTimerIfNeeded() }
+        }
+        .onChange(of: showSheet) {
+            if sessionState == .work || sessionState == .breakSession { startTimerIfNeeded() }
+        }
+        .onChange(of: sessionState) {
+            if sessionState == .paused {
                 stopTimer()
-            } else if state == .work || state == .breakSession {
+            } else if sessionState == .work || sessionState == .breakSession {
                 startTimerIfNeeded()
             }
         }
         .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in updateTimerState() }
-        .onChange(of: scenePhase) { newPhase in
-            if newPhase == .background || newPhase == .inactive {
+        .onChange(of: scenePhase) {
+            if scenePhase == .background || scenePhase == .inactive {
                 saveAppState()
-            } else if newPhase == .active {
+            } else if scenePhase == .active {
                 restoreAppState()
             }
         }
     }
     
     private var timelineSection: some View {
-        TimelineView(tasks: scheduledTasks, sessionState: sessionState) { task, now, debug, paused in
+        TimelineView(tasks: scheduledTasks, sessionState: sessionState, selectedDate: selectedDate) { task, now, debug, paused in
             let trail = taskTrails[task.id] ?? []
             TaskBlockView(task: task, hourWidth: 150, now: now, debugMode: debug, isPausedByUser: sessionState == .paused, trail: trail)
         }
@@ -108,6 +132,21 @@ struct ContentView: View {
         let breakTime: TimeInterval
         let activeWork: Bool
         let activeBreak: Bool
+        @Binding var selectedDate: Date
+        @Binding var showDatePicker: Bool
+
+        private var formattedDate: String {
+            let weekdayFormatter = DateFormatter()
+            weekdayFormatter.dateFormat = "EEEE"
+            let monthFormatter = DateFormatter()
+            monthFormatter.dateFormat = "MMM"
+            let dayFormatter = DateFormatter()
+            dayFormatter.dateFormat = "d"
+            let weekday = weekdayFormatter.string(from: selectedDate)
+            let month = monthFormatter.string(from: selectedDate)
+            let day = dayFormatter.string(from: selectedDate)
+            return "\(weekday), \(month)\(day)"
+        }
 
         var body: some View {
             HStack(alignment: .top) {
@@ -120,10 +159,11 @@ struct ContentView: View {
                         .id(statusText)
                         .offset(y: -15)
 
-                    Text(Date.now, format: .dateTime.weekday(.wide).month().day())
+                    Text(formattedDate)
                         .font(.system(size: 12.4, weight: .bold, design: .monospaced))
                         .foregroundColor(.white)
                         .padding(.top, 8)
+                        .onTapGesture { showDatePicker = true }
                 }
 
                 Spacer()

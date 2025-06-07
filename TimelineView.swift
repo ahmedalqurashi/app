@@ -3,6 +3,7 @@ import SwiftUI
 struct TimelineView<Content: View>: View {
     let tasks: [ScheduleTask]
     let sessionState: SessionState
+    let selectedDate: Date
     let content: (ScheduleTask, Date, Bool, Bool) -> Content
     let hourHeight: CGFloat = 120 //was 80
     let slotsInDay = 48 // 24 hours * 2 (every 30 minutes)
@@ -15,9 +16,10 @@ struct TimelineView<Content: View>: View {
     @Environment(\.scenePhase) private var scenePhase
     private var currentTimeMarkerID: String { "currentTime-\(Int(Date().timeIntervalSince1970))" }
     
-    init(tasks: [ScheduleTask], sessionState: SessionState, @ViewBuilder content: @escaping (ScheduleTask, Date, Bool, Bool) -> Content) {
+    init(tasks: [ScheduleTask], sessionState: SessionState, selectedDate: Date, @ViewBuilder content: @escaping (ScheduleTask, Date, Bool, Bool) -> Content) {
         self.tasks = tasks
         self.sessionState = sessionState
+        self.selectedDate = selectedDate
         self.content = content
     }
     
@@ -35,8 +37,8 @@ struct TimelineView<Content: View>: View {
         .onAppear {
             requestCentering()
         }
-        .onChange(of: scenePhase) { phase in
-            if phase == .active {
+        .onChange(of: scenePhase) {
+            if scenePhase == .active {
                 requestCentering()
             }
         }
@@ -87,7 +89,7 @@ struct TimelineView<Content: View>: View {
         ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
                 Color.clear.onAppear { scrollProxyRef = proxy }
-                let now = Date()
+                let now = selectedDate
                 HStack(alignment: .top, spacing: 0) {
                     HourLabels(
                         slots: slotsInDay,
@@ -109,11 +111,13 @@ struct TimelineView<Content: View>: View {
                             .frame(height: 1)
                             .alignmentGuide(.top) { _ in -timeToPosition(now) }
                             .id("currentTime")
-                        Rectangle()
-                            .fill(Color(red: 1, green: 0.84, blue: 0))
-                            .frame(height: 2)
-                            .offset(y: timeToPosition(now))
-                            .zIndex(1)
+                        if Calendar.current.isDateInToday(selectedDate) {
+                            Rectangle()
+                                .fill(Color(red: 1, green: 0.84, blue: 0))
+                                .frame(height: 2)
+                                .offset(y: timeToPosition(Date()))
+                                .zIndex(1)
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .top)
                 }
@@ -184,7 +188,7 @@ struct TimelineView_Previews: PreviewProvider {
             ScheduleTask(name: "Lunch Break", startTime: calendar.date(bySettingHour: 13, minute: 0, second: 0, of: now)!, duration: 1 * 3600, category: .freeTime),
             ScheduleTask(name: "Project Planning", startTime: calendar.date(bySettingHour: 14, minute: 0, second: 0, of: now)!, duration: 1.5 * 3600, category: .focus)
         ]
-        TimelineView(tasks: sampleTasks, sessionState: .work, content: { task, now, debugMode, _ in
+        TimelineView(tasks: sampleTasks, sessionState: .work, selectedDate: now, content: { task, now, debugMode, _ in
             TaskBlockView(task: task, hourWidth: 150, now: now, debugMode: debugMode, isPausedByUser: false, trail: [])
         })
     }

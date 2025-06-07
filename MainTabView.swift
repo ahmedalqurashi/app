@@ -15,200 +15,149 @@ struct MainTabView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            VStack(spacing: 0) {
-                ZStack {
-                    // Timeline background pulse
-                    Color.black.ignoresSafeArea()
-                    if isCurrentTaskActive {
-                        Color.purple.opacity(isGlowing ? 0.10 : 0.04)
-                            .ignoresSafeArea()
-                            .animation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true), value: isGlowing)
-                    }
-                    Group {
-                        switch selectedTab {
-                        case 0: Text("Profile").foregroundColor(.white)
-                        case 1: ContentView(scheduledTasks: $scheduledTasks, sessionState: $sessionState, taskTrails: taskTrails, resetScroll: $timelineShouldResetScroll)
-                        case 2: Text("Settings").foregroundColor(.white)
-                        default: ContentView(scheduledTasks: $scheduledTasks, sessionState: $sessionState, taskTrails: taskTrails, resetScroll: $timelineShouldResetScroll)
-                        }
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // Custom Tab Bar
-            HStack {
-                Spacer()
-                TabBarButton(icon: "person.crop.circle", isSelected: selectedTab == 0) {
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
-                        selectedTab = 0
-                    }
-                }
-                Spacer()
-                // Center arrow button
-                Spacer()
-                TabBarButton(icon: "gearshape.fill", isSelected: selectedTab == 2) {
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
-                        selectedTab = 2
-                    }
-                }
-                Spacer()
-            }
-            .frame(height: 60)
-            .background(
-                Color(.systemGray6)
-                    .opacity(0.15)
-                    .blur(radius: 10)
-                    .ignoresSafeArea(edges: .bottom)
-            )
-            .overlay(
-                ZStack {
-                    if sessionState == .paused {
-                        PauseLottieView()
-                            .frame(width: 60, height: 60)
-                            .offset(y: -40)
-                            .transition(.opacity)
-                    }
-                    Image(systemName: "arrowtriangle.up.fill")
-                        .font(.system(size: 36, weight: .bold))
-                        .foregroundColor(buttonColor)
-                        .frame(width: 64, height: 64)
-                        .background(
-                            Circle()
-                                .fill(buttonColor)
-                                .shadow(color: isGlowing ? buttonColor.opacity(0.7) : .clear, radius: isGlowing ? 24 : 10)
-                        )
-                        .scaleEffect(isGlowing ? 1.12 : 1.0)
-                        .offset(y: buttonYOffset)
-                        .gesture(
-                            DragGesture()
-                                .onChanged { value in
-                                    dragOffset = max(0, value.translation.height)
-                                }
-                                .onEnded { value in
-                                    if dragOffset > 60 && (sessionState == .work || sessionState == .breakSession) {
-                                        previousSessionState = sessionState
-                                        sessionState = .paused
-                                    } else if dragOffset < -40 && sessionState == .paused {
-                                        sessionState = previousSessionState ?? .work
-                                    }
-                                    dragOffset = 0
-                                }
-                        )
-                        .onTapGesture {
-                            switch sessionState {
-                            case .none:
-                                showSheet = true
-                            case .work:
-                                sessionState = .breakSession
-                            case .breakSession, .paused:
-                                sessionState = .work
-                            }
-                        }
-                }
-            )
+            mainContent
+            customTabBar
         }
         .sheet(isPresented: $showSheet) {
-            MinimalDarkSheet { hours, start, end in
-                guard let start = start, let hours = Double(hours) else { return }
-                let totalWorkSeconds = hours * 3600
-                let workBlock: TimeInterval = 25 * 60
-                let breakBlock: TimeInterval = 5 * 60
-                var blockSpecs: [(name: String, duration: TimeInterval, category: TaskCategory)] = []
-                var remainingWork = totalWorkSeconds
-                while remainingWork > 0 {
-                    let thisWorkDuration = min(workBlock, remainingWork)
-                    blockSpecs.append(("Work", thisWorkDuration, .focus))
-                    remainingWork -= thisWorkDuration
-                    if remainingWork > 0 {
-                        blockSpecs.append(("Break", breakBlock, .freeTime))
+            MinimalDarkSheet { intended, start, end in
+                showSheet = false
+                if let s = start, let e = end {
+                    let task = ScheduleTask(
+                        name: "Focus",
+                        startTime: s,
+                        duration: e.timeIntervalSince(s),
+                        category: .focus
+                    )
+                    scheduledTasks.append(task)
+                    sessionState = .work
+                    timelineShouldResetScroll.toggle()
+                }
+            }
+        }
+    }
+
+    private var mainContent: some View {
+        VStack(spacing: 0) {
+            ZStack {
+                // Timeline background pulse
+                Color.black.ignoresSafeArea()
+                if isCurrentTaskActive {
+                    Color.purple.opacity(isGlowing ? 0.10 : 0.04)
+                        .ignoresSafeArea()
+                        .animation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true), value: isGlowing)
+                }
+                Group {
+                    switch selectedTab {
+                    case 0: Text("Profile").foregroundColor(.white)
+                    case 1: ContentView(scheduledTasks: $scheduledTasks, sessionState: $sessionState, taskTrails: taskTrails, resetScroll: $timelineShouldResetScroll)
+                    case 2: Text("Settings").foregroundColor(.white)
+                    default: ContentView(scheduledTasks: $scheduledTasks, sessionState: $sessionState, taskTrails: taskTrails, resetScroll: $timelineShouldResetScroll)
                     }
                 }
-                var blocks: [ScheduleTask] = []
-                var accumulated: TimeInterval = 0
-                let calendar = Calendar.current
-                for (i, spec) in blockSpecs.enumerated() {
-                    let blockStartRaw = start.addingTimeInterval(accumulated)
-                    // Snap start to the exact minute (zero seconds)
-                    let snappedStart = calendar.date(bySettingHour: calendar.component(.hour, from: blockStartRaw),
-                                                     minute: calendar.component(.minute, from: blockStartRaw),
-                                                     second: 0,
-                                                     of: blockStartRaw) ?? blockStartRaw
-                    let rawEnd = snappedStart.addingTimeInterval(spec.duration)
-                    // Snap end to the exact minute (zero seconds)
-                    let snappedEnd = calendar.date(bySettingHour: calendar.component(.hour, from: rawEnd),
-                                                   minute: calendar.component(.minute, from: rawEnd),
-                                                   second: 0,
-                                                   of: rawEnd) ?? rawEnd
-                    let duration = snappedEnd.timeIntervalSince(snappedStart)
-                    blocks.append(ScheduleTask(name: spec.name, startTime: snappedStart, duration: duration, category: spec.category))
-                    // Debug print
-                    let hourHeight: CGFloat = 120 // Keep in sync with TimelineView
-                    let offset = (CGFloat(calendar.component(.hour, from: snappedStart)) + CGFloat(calendar.component(.minute, from: snappedStart)) / 60.0) * hourHeight
-                    print("Block #\(i): \(spec.name) | Start: \(snappedStart) | End: \(snappedEnd) | Duration: \(duration) | Offset: \(offset)")
-                    accumulated += duration
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var customTabBar: some View {
+        HStack {
+            Spacer()
+            TabBarButton(icon: "person.crop.circle", isSelected: selectedTab == 0) {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                    selectedTab = 0
                 }
-                // Remove any tasks that overlap with the new blocks
-                let newStart = start
-                let newEnd = start.addingTimeInterval(accumulated)
-                let filtered = scheduledTasks.filter { task in
-                    let taskEnd = task.startTime.addingTimeInterval(task.duration)
-                    return taskEnd <= newStart || task.startTime >= newEnd
+            }
+            Spacer()
+            // Center arrow button
+            Spacer()
+            TabBarButton(icon: "gearshape.fill", isSelected: selectedTab == 2) {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                    selectedTab = 2
                 }
-                scheduledTasks = filtered + blocks
-                showSheet = false
             }
+            Spacer()
         }
-        .onAppear {
-            startTimer()
-            if isCurrentTaskActive && !sessionState.paused && isCurrentTaskWorkSession {
-                isGlowing = true
-            } else {
-                isGlowing = false
-            }
-        }
-        .onDisappear {
-            stopTimer()
-        }
-        .onChange(of: isCurrentTaskActive) { active in
-            if active && !sessionState.paused && isCurrentTaskWorkSession {
-                isGlowing = true
-            } else {
-                isGlowing = false
-            }
-        }
-        .onChange(of: sessionState.paused) { paused in
-            if paused {
-                isGlowing = false
-            } else if isCurrentTaskActive && isCurrentTaskWorkSession {
-                isGlowing = true
-            }
-        }
-        .onChange(of: isCurrentTaskWorkSession) { isWork in
-            if isWork && isCurrentTaskActive && !sessionState.paused {
-                isGlowing = true
-            }
-        }
-        .onChange(of: selectedTab) { newTab in
-            if newTab == 1 {
-                timelineShouldResetScroll = true
-            }
-        }
-        .onChange(of: currentTimerMode) { _ in
-            sessionResetSignal += 1
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
-            timelineShouldResetScroll = true
-        }
-        // Attach the glow overlay to the very outer container
-        .overlay(
-            GlowingEdgeView(isActive: isGlowing && isCurrentTaskWorkSession)
-                .ignoresSafeArea()
+        .frame(height: 60)
+        .background(
+            Color(.systemGray6)
+                .opacity(0.15)
+                .blur(radius: 10)
+                .ignoresSafeArea(edges: .bottom)
         )
-        .overlay(
-            sessionState == .paused ?
-                Color.black.opacity(0.4).ignoresSafeArea().transition(.opacity)
-                : nil
+        .overlay(triangleButtonOverlay)
+    }
+
+    private var triangleButtonOverlay: some View {
+        let dragRange: ClosedRange<CGFloat> = -32...32   // finger travel
+
+        return VStack(spacing: 12) {         // TIMER ▶︎ always above BUTTON
+            // ── bullet + timer ───────────────────────
+            if let mode = sessionTimerMode {
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(sessionAccentColor)
+                        .frame(width: 8, height: 8)
+                    TimerView(mode: mode,
+                              isActive: sessionState != .paused,
+                              resetSignal: sessionResetSignal)
+                }
+            }
+
+            // ── arrow button ─────────────────────────
+            ZStack {
+                Circle()
+                    .fill(sessionAccentColor)
+                    .shadow(color: isGlowing ? sessionAccentColor.opacity(0.7) : .clear,
+                            radius: isGlowing ? 24 : 10)
+                Image(systemName: "arrowtriangle.up.fill")
+                    .font(.system(size: 36, weight: .bold))
+                    .foregroundColor(.white)
+            }
+            .frame(width: 64, height: 64)
+        }
+        // ⬇︎ move BOTH timer and button together
+        .offset(y: buttonYOffset + dragOffset)
+        .contentShape(Rectangle())            // correct hit-test
+        // ── gestures on the whole stack ─────────────────────────────
+        .highPriorityGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    dragOffset = dragRange.clamp(value.translation.height)
+                }
+                .onEnded { value in
+                    if value.translation.height > 24,
+                       [.work, .breakSession].contains(sessionState) {
+                        previousSessionState = sessionState
+                        sessionState         = .paused
+                    } else if value.translation.height < -24,
+                              sessionState == .paused {
+                        sessionState         = previousSessionState ?? .work
+                        sessionResetSignal  += 1
+                    }
+                    dragOffset = 0
+                }
         )
+        .simultaneousGesture(
+            TapGesture()
+                .onEnded {
+                    switch sessionState {
+                    case .none:
+                        showSheet = true
+                    case .work:
+                        sessionState = .breakSession
+                        sessionResetSignal += 1
+                    case .breakSession, .paused:
+                        sessionState = .work
+                        sessionResetSignal += 1
+                    }
+                }
+        )
+        // smooth motion for finger-drag **and** session state change
+        .animation(.interactiveSpring(), value: dragOffset)
+        .animation(.spring(response: 0.35, dampingFraction: 0.8),
+                   value: sessionState)
+        .padding(.bottom, 4)
+        .zIndex(2)
     }
 
     private var isCurrentTaskActive: Bool {
@@ -249,7 +198,7 @@ struct MainTabView: View {
             calendar.compare(currentNow, to: task.startTime, toGranularity: .minute) != .orderedAscending &&
             calendar.compare(currentNow, to: task.endTime, toGranularity: .minute) == .orderedAscending
         }) else { return }
-        let isFocus = isGlowing && !sessionState.paused && currentTask.category == .focus
+        let isFocus = isGlowing && sessionState != .paused && currentTask.category == .focus
         let taskId = currentTask.id
         let minuteStart = calendar.date(bySetting: .second, value: 0, of: previousNow) ?? previousNow
         let minuteEnd = calendar.date(bySetting: .second, value: 0, of: currentNow) ?? currentNow
@@ -265,7 +214,7 @@ struct MainTabView: View {
     }
 
     private var currentTimerMode: TimerView.Mode? {
-        if isCurrentTaskWorkSession && !sessionState.paused {
+        if isCurrentTaskWorkSession && sessionState != .paused {
             return .work
         } else if isCurrentTaskBreakSession {
             return .breakTime
@@ -299,28 +248,40 @@ struct MainTabView: View {
         return scheduledTasks.contains { task in
             calendar.compare(now, to: task.startTime, toGranularity: .minute) != .orderedAscending &&
             calendar.compare(now, to: task.endTime, toGranularity: .minute) == .orderedAscending &&
-            (task.category == .freeTime || (task.category == .focus && sessionState.paused))
+            (task.category == .freeTime || (task.category == .focus && sessionState != .paused))
         }
     }
 
     private let darkPurple = Color(red: 0.4, green: 0.0, blue: 0.7)
 
-    private var buttonColor: Color {
+    // MARK: – session accent colours  (place near other constants)
+    private let workAccent  = Color(red: 0.6, green: 0.1, blue: 1.0)  // same as TimerView
+    private let breakAccent = Color(red: 0.1, green: 0.4, blue: 1.0)
+
+    private var sessionAccentColor: Color {
         switch sessionState {
-        case .none, .paused: return Color(.systemGray4)
-        case .work: return Color.purple
-        case .breakSession: return Color.blue
+        case .work:         return workAccent
+        case .breakSession: return breakAccent
+        default:            return Color(.systemGray4)
         }
     }
 
-    private var isGlowing: Bool {
-        sessionState == .work
-    }
+    private var buttonColor: Color { sessionAccentColor }
+
+    private var isGlowing: Bool { sessionState == .work }
 
     private var buttonYOffset: CGFloat {
         switch sessionState {
         case .none, .paused: return 0
-        case .work, .breakSession: return -32
+        case .work, .breakSession: return -60
+        }
+    }
+
+    private var sessionTimerMode: TimerView.Mode? {
+        switch sessionState {
+        case .work:         return .work
+        case .breakSession: return .breakTime
+        default:            return nil        // hide when .none or .paused
         }
     }
 }
@@ -371,10 +332,10 @@ struct TimerView: View {
                     sessionTimer += 1
                 }
             }
-            .onChange(of: resetSignal) { newValue in
-                if newValue != lastResetSignal {
+            .onChange(of: resetSignal) {
+                if resetSignal != lastResetSignal {
                     sessionTimer = 0
-                    lastResetSignal = newValue
+                    lastResetSignal = resetSignal
                 }
             }
     }
@@ -391,3 +352,9 @@ struct TimerView: View {
 //         }
 //     }
 // } 
+
+private extension ClosedRange where Bound == CGFloat {
+    func clamp(_ value: CGFloat) -> CGFloat {
+        min(max(lowerBound, value), upperBound)
+    }
+} 

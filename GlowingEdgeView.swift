@@ -56,8 +56,8 @@ public struct GlowingEdgeView: View {
                 show = false
                 gradientAngle = 0
             }
-            .onChange(of: isActive) { active in
-                if active {
+            .onChange(of: isActive) {
+                if isActive {
                     show = true
                     startAnimating()
                 } else {
