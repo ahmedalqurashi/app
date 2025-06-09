@@ -13,6 +13,7 @@ struct MainTabView: View {
     @State private var previousSessionState: SessionState? = nil
     @State private var taskTrails: [UUID: [(start: Date, end: Date, isFocus: Bool)]] = [:]
     @State private var ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    @State private var sessionStartTime: Date? = nil
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -285,6 +286,7 @@ struct MainTabView: View {
                              category: .manualFocus)
             )
             sessionState = .work
+            sessionStartTime = start
             timelineShouldResetScroll.toggle()
         case .work:
             // Finalize the current manual focus task if it exists
@@ -294,6 +296,7 @@ struct MainTabView: View {
                 scheduledTasks[idx] = scheduledTasks[idx].withDuration(actualDuration)
             }
             sessionState = .breakSession
+            sessionStartTime = Date()
             sessionResetSignal += 1
         case .breakSession, .paused:
             let start = Date()
@@ -304,6 +307,7 @@ struct MainTabView: View {
                              category: .manualFocus)
             )
             sessionState = .work
+            sessionStartTime = start
             sessionResetSignal += 1
         }
     }
@@ -318,6 +322,7 @@ struct MainTabView: View {
             }
             previousSessionState = sessionState
             sessionState         = .paused
+            sessionStartTime     = nil
         } else if dy < -24, sessionState == .paused {
             let start = Date()
             scheduledTasks.append(
@@ -327,6 +332,7 @@ struct MainTabView: View {
                              category: .manualFocus)
             )
             sessionState         = previousSessionState ?? .work
+            sessionStartTime     = start
             sessionResetSignal  += 1
         }
         dragOffset = 0
@@ -334,7 +340,11 @@ struct MainTabView: View {
 
     // Helper to get the current session's elapsed time in seconds
     private var currentSessionElapsedTime: Int {
-        return 0
+        guard let start = sessionStartTime,
+              sessionState == .work || sessionState == .breakSession else {
+            return 0
+        }
+        return Int(Date().timeIntervalSince(start))
     }
 }
 
