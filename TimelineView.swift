@@ -161,7 +161,7 @@ struct TaskBlockView: View {
                     let segHeight = max(0, (endFrac - startFrac) * height)
                     let yOffset = max(0, startFrac * height)
                     Rectangle()
-                        .fill(interval.isFocus ? Color.purple : Color.blue.opacity(0.7))
+                        .fill((task.category == .focus || task.category == .manualFocus) && interval.isFocus ? Color.purple : Color.blue.opacity(0.7))
                         .frame(height: segHeight)
                         .offset(y: yOffset)
                         .animation(.easeInOut(duration: 1), value: trail.count)
@@ -169,8 +169,10 @@ struct TaskBlockView: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 8))
             // Render the default background for the rest of the task
-            RoundedRectangle(cornerRadius: 8)
-                .fill(task.category.color.opacity(0.3))
+            if task.category != .manualFocus {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(task.category.color.opacity(0.3))
+            }
             // Optional: add a border or shadow
             RoundedRectangle(cornerRadius: 8)
                 .stroke(Color.black.opacity(0.2), lineWidth: 1)

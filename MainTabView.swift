@@ -12,11 +12,27 @@ struct MainTabView: View {
     @State private var dragOffset: CGFloat = 0
     @State private var previousSessionState: SessionState? = nil
     @State private var taskTrails: [UUID: [(start: Date, end: Date, isFocus: Bool)]] = [:]
+    @State private var ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         ZStack(alignment: .bottom) {
             mainContent
             customTabBar
+        }
+        .onReceive(ticker) { _ in
+            let newNow = Date()
+            // 1. First extend / correct the manual block
+            if sessionState == .work, let i = scheduledTasks.lastIndex(where: { $0.category == .manualFocus && $0.startTime <= newNow }) {
+                let start = scheduledTasks[i].startTime
+                let live = newNow.timeIntervalSince(start) + 2 // keep it ahead
+                scheduledTasks[i] = scheduledTasks[i].withDuration(live)
+            }
+            // 2. Then use it for the trail & UI
+            if [.work, .breakSession].contains(sessionState) {
+                updateTrail(previousNow: now, currentNow: newNow)
+            }
+            // Only update 'now' for the current session; remove per-session timer logic
+            now = newNow
         }
         .sheet(isPresented: $showSheet) {
             MinimalDarkSheet { intended, start, end in
@@ -35,9 +51,12 @@ struct MainTabView: View {
             }
         }
     }
-
+//  ZStack {
+//             Color.black.ignoresSafeArea()
+//             GlowingEdgeView(isActive: true)
+//         }
     private var mainContent: some View {
-        VStack(spacing: 0) {
+       VStack(spacing: 0) {
             ZStack {
                 // Timeline background pulse
                 Color.black.ignoresSafeArea()
@@ -49,11 +68,14 @@ struct MainTabView: View {
                 Group {
                     switch selectedTab {
                     case 0: Text("Profile").foregroundColor(.white)
-                    case 1: ContentView(scheduledTasks: $scheduledTasks, sessionState: $sessionState, taskTrails: taskTrails, resetScroll: $timelineShouldResetScroll)
+                    case 1: ContentView(scheduledTasks: $scheduledTasks, sessionState: $sessionState, taskTrails: taskTrails, resetScroll: $timelineShouldResetScroll, now: $now)
                     case 2: Text("Settings").foregroundColor(.white)
-                    default: ContentView(scheduledTasks: $scheduledTasks, sessionState: $sessionState, taskTrails: taskTrails, resetScroll: $timelineShouldResetScroll)
+                    default: ContentView(scheduledTasks: $scheduledTasks, sessionState: $sessionState, taskTrails: taskTrails, resetScroll: $timelineShouldResetScroll, now: $now)
                     }
                 }
+                if isCurrentTaskWorkSession {
+                    GlowingEdgeView(isActive: true)
+                } 
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -78,18 +100,18 @@ struct MainTabView: View {
             Spacer()
         }
         .frame(height: 60)
-        .background(
-            Color(.systemGray6)
-                .opacity(0.15)
-                .blur(radius: 10)
-                .ignoresSafeArea(edges: .bottom)
-        )
+        // .background(
+        //     Color(.systemGray6)
+        //         .opacity(0.15)
+        //         .blur(radius: 10)
+        //         .ignoresSafeArea(edges: .bottom)
+        // )
         .overlay(triangleButtonOverlay)
     }
 
     private var triangleButtonOverlay: some View {
         let dragRange: ClosedRange<CGFloat> = -32...32   // finger travel
-
+        let elapsedTime = currentSessionElapsedTime
         return VStack(spacing: 12) {         // TIMER ▶︎ always above BUTTON
             // ── bullet + timer ───────────────────────
             if let mode = sessionTimerMode {
@@ -99,7 +121,8 @@ struct MainTabView: View {
                         .frame(width: 8, height: 8)
                     TimerView(mode: mode,
                               isActive: sessionState != .paused,
-                              resetSignal: sessionResetSignal)
+                              resetSignal: sessionResetSignal,
+                              elapsedTime: elapsedTime)
                 }
             }
 
@@ -114,44 +137,25 @@ struct MainTabView: View {
                     .foregroundColor(.white)
             }
             .frame(width: 64, height: 64)
+            .gesture(
+                DragGesture(minimumDistance: 10)
+                    .onChanged { value in
+                        dragOffset = dragRange.clamp(value.translation.height)
+                    }
+                    .onEnded { value in
+                        handleDrag(value.translation.height)
+                    }
+            )
+            .onTapGesture {
+                handleTap()
+            }
+            .onLongPressGesture {
+                showSheet = true
+            }
         }
         // ⬇︎ move BOTH timer and button together
         .offset(y: buttonYOffset + dragOffset)
         .contentShape(Rectangle())            // correct hit-test
-        // ── gestures on the whole stack ─────────────────────────────
-        .highPriorityGesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { value in
-                    dragOffset = dragRange.clamp(value.translation.height)
-                }
-                .onEnded { value in
-                    if value.translation.height > 24,
-                       [.work, .breakSession].contains(sessionState) {
-                        previousSessionState = sessionState
-                        sessionState         = .paused
-                    } else if value.translation.height < -24,
-                              sessionState == .paused {
-                        sessionState         = previousSessionState ?? .work
-                        sessionResetSignal  += 1
-                    }
-                    dragOffset = 0
-                }
-        )
-        .simultaneousGesture(
-            TapGesture()
-                .onEnded {
-                    switch sessionState {
-                    case .none:
-                        showSheet = true
-                    case .work:
-                        sessionState = .breakSession
-                        sessionResetSignal += 1
-                    case .breakSession, .paused:
-                        sessionState = .work
-                        sessionResetSignal += 1
-                    }
-                }
-        )
         // smooth motion for finger-drag **and** session state change
         .animation(.interactiveSpring(), value: dragOffset)
         .animation(.spring(response: 0.35, dampingFraction: 0.8),
@@ -161,19 +165,20 @@ struct MainTabView: View {
     }
 
     private var isCurrentTaskActive: Bool {
-        let calendar = Calendar.current
-        return scheduledTasks.contains { task in
-            calendar.compare(now, to: task.startTime, toGranularity: .minute) != .orderedAscending &&
-            calendar.compare(now, to: task.endTime, toGranularity: .minute) == .orderedAscending
+        scheduledTasks.contains { task in
+            task.startTime <= now && now < task.endTime
         }
     }
 
     private var isCurrentTaskWorkSession: Bool {
-        let calendar = Calendar.current
-        return scheduledTasks.contains { task in
-            calendar.compare(now, to: task.startTime, toGranularity: .minute) != .orderedAscending &&
-            calendar.compare(now, to: task.endTime, toGranularity: .minute) == .orderedAscending &&
-            task.category == .focus
+        scheduledTasks.contains { task in
+            task.startTime <= now && now < task.endTime && (task.category == .focus || task.category == .manualFocus)
+        } && sessionState == .work
+    }
+
+    private var isCurrentTaskBreakSession: Bool {
+        scheduledTasks.contains { task in
+            task.startTime <= now && now < task.endTime && (task.category == .freeTime || (task.category == .focus && sessionState != .paused))
         }
     }
 
@@ -192,25 +197,18 @@ struct MainTabView: View {
     }
 
     private func updateTrail(previousNow: Date, currentNow: Date) {
-        // Find the current task
-        let calendar = Calendar.current
-        guard let currentTask = scheduledTasks.first(where: { task in
-            calendar.compare(currentNow, to: task.startTime, toGranularity: .minute) != .orderedAscending &&
-            calendar.compare(currentNow, to: task.endTime, toGranularity: .minute) == .orderedAscending
-        }) else { return }
-        let isFocus = isGlowing && sessionState != .paused && currentTask.category == .focus
-        let taskId = currentTask.id
-        let minuteStart = calendar.date(bySetting: .second, value: 0, of: previousNow) ?? previousNow
-        let minuteEnd = calendar.date(bySetting: .second, value: 0, of: currentNow) ?? currentNow
-        var intervals = taskTrails[taskId] ?? []
-        if let last = intervals.last, last.isFocus == isFocus, calendar.isDate(last.end, equalTo: minuteStart, toGranularity: .minute) {
-            // Extend the last interval
-            intervals[intervals.count - 1].end = minuteEnd
+        guard let currentTask = scheduledTasks.first(where: { $0.contains(date: currentNow) })
+        else { return }
+        let isWorkSecond = (sessionState == .work)
+        var intervals = taskTrails[currentTask.id] ?? []
+        if let last = intervals.last,
+           last.isFocus == isWorkSecond,
+           Calendar.current.isDate(last.end, equalTo: previousNow, toGranularity: .second) {
+            intervals[intervals.count - 1].end = currentNow
         } else {
-            // Start a new interval
-            intervals.append((start: minuteStart, end: minuteEnd, isFocus: isFocus))
+            intervals.append((start: previousNow, end: currentNow, isFocus: isWorkSecond))
         }
-        taskTrails[taskId] = intervals
+        taskTrails[currentTask.id] = intervals
     }
 
     private var currentTimerMode: TimerView.Mode? {
@@ -243,15 +241,6 @@ struct MainTabView: View {
         return String(format: "%02d:%02d", minutes, seconds)
     }
 
-    private var isCurrentTaskBreakSession: Bool {
-        let calendar = Calendar.current
-        return scheduledTasks.contains { task in
-            calendar.compare(now, to: task.startTime, toGranularity: .minute) != .orderedAscending &&
-            calendar.compare(now, to: task.endTime, toGranularity: .minute) == .orderedAscending &&
-            (task.category == .freeTime || (task.category == .focus && sessionState != .paused))
-        }
-    }
-
     private let darkPurple = Color(red: 0.4, green: 0.0, blue: 0.7)
 
     // MARK: – session accent colours  (place near other constants)
@@ -268,7 +257,7 @@ struct MainTabView: View {
 
     private var buttonColor: Color { sessionAccentColor }
 
-    private var isGlowing: Bool { sessionState == .work }
+    private var isGlowing: Bool { sessionState == .work && isCurrentTaskWorkSession }
 
     private var buttonYOffset: CGFloat {
         switch sessionState {
@@ -283,6 +272,69 @@ struct MainTabView: View {
         case .breakSession: return .breakTime
         default:            return nil        // hide when .none or .paused
         }
+    }
+
+    private func handleTap() {
+        switch sessionState {
+        case .none:
+            let start = Date()
+            scheduledTasks.append(
+                ScheduleTask(name: "ManualFocus",
+                             startTime: start,
+                             duration: 12 * 60 * 60, // 12 hours generous
+                             category: .manualFocus)
+            )
+            sessionState = .work
+            timelineShouldResetScroll.toggle()
+        case .work:
+            // Finalize the current manual focus task if it exists
+            if let idx = scheduledTasks.lastIndex(where: { $0.category == .manualFocus && $0.startTime <= Date() && $0.endTime > Date() }) {
+                let start = scheduledTasks[idx].startTime
+                let actualDuration = Date().timeIntervalSince(start)
+                scheduledTasks[idx] = scheduledTasks[idx].withDuration(actualDuration)
+            }
+            sessionState = .breakSession
+            sessionResetSignal += 1
+        case .breakSession, .paused:
+            let start = Date()
+            scheduledTasks.append(
+                ScheduleTask(name: "ManualFocus",
+                             startTime: start,
+                             duration: 12 * 60 * 60, // 12 hours generous
+                             category: .manualFocus)
+            )
+            sessionState = .work
+            sessionResetSignal += 1
+        }
+    }
+
+    private func handleDrag(_ dy: CGFloat) {
+        if dy > 24, [.work, .breakSession].contains(sessionState) {
+            // Finalize the current manual focus task if it exists
+            if let idx = scheduledTasks.lastIndex(where: { $0.category == .manualFocus && $0.startTime <= Date() && $0.endTime > Date() }) {
+                let start = scheduledTasks[idx].startTime
+                let actualDuration = Date().timeIntervalSince(start)
+                scheduledTasks[idx] = scheduledTasks[idx].withDuration(actualDuration)
+            }
+            previousSessionState = sessionState
+            sessionState         = .paused
+        } else if dy < -24, sessionState == .paused {
+            let start = Date()
+            scheduledTasks.append(
+                ScheduleTask(name: "ManualFocus",
+                             startTime: start,
+                             duration: 12 * 60 * 60, // 12 hours generous
+                             category: .manualFocus)
+            )
+            sessionState         = previousSessionState ?? .work
+            sessionResetSignal  += 1
+        }
+        dragOffset = 0
+    }
+
+    // Helper to get the current session's elapsed time in seconds
+    private var currentSessionElapsedTime: Int {
+        return 0
     }
 }
 
@@ -308,36 +360,20 @@ struct TimerView: View {
     let mode: Mode
     let isActive: Bool
     let resetSignal: Int
+    let elapsedTime: Int
     var bodyColor: Color {
         mode == .work ? Color(red: 0.6, green: 0.1, blue: 1.0) : Color(red: 0.1, green: 0.4, blue: 1.0)
     }
     var shadowColor: Color {
         bodyColor.opacity(0.7)
     }
-    @State private var sessionTimer: Int = 0
-    @State private var lastResetSignal: Int = 0
     var body: some View {
-        Text(String(format: "%02d:%02d", sessionTimer / 60, sessionTimer % 60))
+        Text(String(format: "%02d:%02d", elapsedTime / 60, elapsedTime % 60))
             .font(.system(size: 22, weight: .bold, design: .monospaced))
             .foregroundColor(isActive ? bodyColor : Color.gray)
             .shadow(color: isActive ? shadowColor : .clear, radius: 8, x: 0, y: 0)
             .padding(.horizontal, 9)
             .padding(.vertical, 10)
-            //.background(
-             //   Capsule()
-              //      .fill(bodyColor.opacity(0.18))
-           // )
-            .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
-                if isActive {
-                    sessionTimer += 1
-                }
-            }
-            .onChange(of: resetSignal) {
-                if resetSignal != lastResetSignal {
-                    sessionTimer = 0
-                    lastResetSignal = resetSignal
-                }
-            }
     }
 }
 
@@ -356,5 +392,15 @@ struct TimerView: View {
 private extension ClosedRange where Bound == CGFloat {
     func clamp(_ value: CGFloat) -> CGFloat {
         min(max(lowerBound, value), upperBound)
+    }
+}
+
+extension ScheduleTask {
+    func contains(date: Date) -> Bool {
+        startTime ... endTime ~= date
+    }
+
+    func withDuration(_ new: TimeInterval) -> ScheduleTask {
+        .init(id: self.id, name: name, startTime: startTime, duration: new, category: category)
     }
 } 

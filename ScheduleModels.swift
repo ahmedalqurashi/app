@@ -1,7 +1,7 @@
 import SwiftUI
 
 public struct ScheduleTask: Identifiable, Equatable {
-    public let id = UUID()
+    public let id: UUID
     public let name: String
     public let startTime: Date
     public let duration: TimeInterval
@@ -11,7 +11,8 @@ public struct ScheduleTask: Identifiable, Equatable {
         return startTime.addingTimeInterval(duration)
     }
     
-    public init(name: String, startTime: Date, duration: TimeInterval, category: TaskCategory) {
+    public init(id: UUID = UUID(), name: String, startTime: Date, duration: TimeInterval, category: TaskCategory) {
+        self.id = id
         self.name = name
         self.startTime = startTime
         self.duration = duration
@@ -27,12 +28,14 @@ public enum TaskCategory: String, CaseIterable {
     case focus = "Focus"
     case admin = "Admin"
     case freeTime = "Free Time"
+    case manualFocus = "Manual Focus"
     
     public var color: Color {
         switch self {
         case .focus: return Color.blue.opacity(0.7)
         case .admin: return Color.purple.opacity(0.7)
         case .freeTime: return Color.green.opacity(0.7)
+        case .manualFocus: return Color.purple
         }
     }
 } 

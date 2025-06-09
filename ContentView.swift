@@ -17,7 +17,6 @@ struct ContentView: View {
     @State private var breakTimerValue: TimeInterval = 0
     @State private var timerRunning = false
     @State private var lastWorkBlockId: UUID? = nil
-    @State private var timer: Timer? = nil
     @State private var timerColor: Color = Color.gray
     @State private var timerPausedColor: Color = Color(red: 0.1, green: 0.4, blue: 1.0) // vivid deep blue
     @State private var timerActiveColor: Color = Color(red: 0.6, green: 0.1, blue: 1.0) // vivid deep purple
@@ -26,12 +25,14 @@ struct ContentView: View {
     let modes = ["Pomodoro", "Huberman"]
     @Binding var resetScroll: Bool
     @Namespace private var statusAnim
-    @State private var now: Date = Date()
+    @Binding var now: Date
     @Environment(\.scenePhase) private var scenePhase
     @State private var lastBlockType: String = "work" // "work" or "break"
     @State private var blockStartTime: Date = Date()
     @State private var selectedDate: Date = Date()
     @State private var showDatePicker: Bool = false
+    @State private var totalBreakTime: TimeInterval = 0
+    @State private var breakSessionStart: Date? = nil
     
     private let darkPurple = Color(red: 0.4, green: 0.0, blue: 0.7)
     
@@ -78,35 +79,33 @@ struct ContentView: View {
             UserDefaults.standard.removeObject(forKey: "isPausedByUser")
             UserDefaults.standard.removeObject(forKey: "lastBlockType")
             UserDefaults.standard.removeObject(forKey: "blockStartTime")
-            if sessionState == .work || sessionState == .breakSession { startTimerIfNeeded() }
-            timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
-                now = Date()
-            }
         }
-        .onDisappear {
-            stopTimer()
-            timer?.invalidate()
-            timer = nil
-        }
-        .onChange(of: scheduledTasks) {
-            if sessionState == .work || sessionState == .breakSession { startTimerIfNeeded() }
-        }
-        .onChange(of: showSheet) {
-            if sessionState == .work || sessionState == .breakSession { startTimerIfNeeded() }
-        }
-        .onChange(of: sessionState) {
-            if sessionState == .paused {
-                stopTimer()
-            } else if sessionState == .work || sessionState == .breakSession {
-                startTimerIfNeeded()
-            }
-        }
-        .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in updateTimerState() }
         .onChange(of: scenePhase) {
             if scenePhase == .background || scenePhase == .inactive {
                 saveAppState()
             } else if scenePhase == .active {
                 restoreAppState()
+            }
+        }
+        .onChange(of: now) { _ in
+            updateTotalWorkTimer()
+            incrementTimers()
+            // Update breakTimerValue only if in break session
+            if sessionState == .breakSession, let start = breakSessionStart {
+                breakTimerValue = totalBreakTime + now.timeIntervalSince(start)
+            } else {
+                breakTimerValue = totalBreakTime
+            }
+        }
+        .onChange(of: sessionState) { newState in
+            // Start break session
+            if newState == .breakSession, breakSessionStart == nil {
+                breakSessionStart = now
+            }
+            // End break session
+            if newState != .breakSession, let start = breakSessionStart {
+                totalBreakTime += now.timeIntervalSince(start)
+                breakSessionStart = nil
             }
         }
     }
@@ -198,28 +197,14 @@ struct ContentView: View {
     }
     
     private var isWorkTimerActive: Bool {
-        let now = Date()
-        let calendar = Calendar.current
-        if let currentBlock = scheduledTasks.first(where: { t in
-            calendar.compare(now, to: t.startTime, toGranularity: .minute) != .orderedAscending &&
-            calendar.compare(now, to: t.endTime, toGranularity: .minute) == .orderedAscending
-        }) {
-            return currentBlock.category == .focus && sessionState == .work
+        if let currentBlock = activeBlock(at: now) {
+            return (currentBlock.category == .focus || currentBlock.category == .manualFocus) && sessionState == .work
         }
         return false
     }
 
     private var isBreakTimerActive: Bool {
-        let now = Date()
-        let calendar = Calendar.current
-        if let currentBlock = scheduledTasks.first(where: { t in
-            calendar.compare(now, to: t.startTime, toGranularity: .minute) != .orderedAscending &&
-            calendar.compare(now, to: t.endTime, toGranularity: .minute) == .orderedAscending
-        }) {
-            // Active if on a break block, or on a work block and paused
-            return currentBlock.category == .freeTime || (currentBlock.category == .focus && sessionState == .breakSession)
-        }
-        return false
+        sessionState == .breakSession
     }
 
     private var statusText: String {
@@ -255,48 +240,36 @@ struct ContentView: View {
         }
     }
     
-    private func startTimerIfNeeded() {
-        updateTimerState()
-    }
-    
-    private func stopTimer() {
-        timer?.invalidate()
-        timer = nil
-    }
-    
-    private func updateTimerState() {
-        let now = Date()
-        let tasks = scheduledTasks
-        let calendar = Calendar.current
-        var currentBlock: ScheduleTask? = tasks.first(where: { t in
-            calendar.compare(now, to: t.startTime, toGranularity: .minute) != .orderedAscending &&
-            calendar.compare(now, to: t.endTime, toGranularity: .minute) == .orderedAscending
-        })
-
-        if let currentBlock = currentBlock {
-            if currentBlock.category == .focus && sessionState == .work {
-                // Work timer runs
-                if lastWorkBlockId != currentBlock.id {
-                    workTimerValue = 0
-                    lastWorkBlockId = currentBlock.id
-                }
-                timerRunning = true
-                workTimerValue += 1
-                timerColor = timerActiveColor
-            } else if currentBlock.category == .freeTime || (currentBlock.category == .focus && sessionState == .breakSession) {
-                // Break timer runs (including paused work session)
-                timerRunning = false
-                breakTimerValue += 1
-                timerColor = timerPausedColor
-            } else {
-                timerRunning = false
-                timerColor = timerDefaultColor
+    private func updateTotalWorkTimer() {
+        let today = Calendar.current.startOfDay(for: now)
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: today)!
+        workTimerValue = scheduledTasks
+            .filter { ($0.category == .focus || $0.category == .manualFocus) && $0.startTime >= today && $0.startTime < tomorrow }
+            .reduce(0.0) { sum, task in
+                let end = min(task.endTime, now)
+                let start = max(task.startTime, today)
+                return sum + max(0, end.timeIntervalSince(start))
             }
+        // Remove breakTimerValue calculation from here
+    }
+
+    private func incrementTimers() {
+        // No need to increment breakTimerValue here, handled in updateTotalWorkTimer
+        if let currentBlock = activeBlock(at: now) {
+            timerRunning = false
+            timerColor = timerDefaultColor
         } else {
             timerRunning = false
             timerColor = timerDefaultColor
             lastWorkBlockId = nil
         }
+    }
+
+    // Returns the latest overlapping block (manual focus wins over older blocks)
+    private func activeBlock(at date: Date) -> ScheduleTask? {
+        scheduledTasks
+            .filter { $0.startTime <= date && date < $0.endTime }
+            .max(by: { $0.startTime < $1.startTime })
     }
 
     // --- State Persistence ---
@@ -735,7 +708,7 @@ struct TimeInputCardView_Previews: PreviewProvider {
 
 struct ContentView_Previews: PreviewProvider {
     static var previews: some View {
-        ContentView(scheduledTasks: .constant([]), sessionState: .constant(.paused), taskTrails: [:], resetScroll: .constant(false))
+        ContentView(scheduledTasks: .constant([]), sessionState: .constant(.paused), taskTrails: [:], resetScroll: .constant(false), now: .constant(Date()))
     }
 }
 
