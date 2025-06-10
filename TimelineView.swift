@@ -180,21 +180,21 @@ struct TaskBlockView: View {
     }
 }
 
-struct TimelineView_Previews: PreviewProvider {
-    static var previews: some View {
-        let calendar = Calendar.current
-        let now = Date()
-        let sampleTasks = [
-            ScheduleTask(name: "Deep Work", startTime: calendar.date(bySettingHour: 9, minute: 0, second: 0, of: now)!, duration: 2 * 3600, category: .focus),
-            ScheduleTask(name: "Team Meeting", startTime: calendar.date(bySettingHour: 11, minute: 30, second: 0, of: now)!, duration: 1 * 3600, category: .admin),
-            ScheduleTask(name: "Lunch Break", startTime: calendar.date(bySettingHour: 13, minute: 0, second: 0, of: now)!, duration: 1 * 3600, category: .freeTime),
-            ScheduleTask(name: "Project Planning", startTime: calendar.date(bySettingHour: 14, minute: 0, second: 0, of: now)!, duration: 1.5 * 3600, category: .focus)
-        ]
-        TimelineView(tasks: sampleTasks, sessionState: .work, selectedDate: now, content: { task, now, debugMode, _ in
-            TaskBlockView(task: task, hourWidth: 150, now: now, debugMode: debugMode, isPausedByUser: false, trail: [])
-        })
-    }
-}
+// struct TimelineView_Previews: PreviewProvider {
+//     static var previews: some View {
+//         let calendar = Calendar.current
+//         let now = Date()
+//         let sampleTasks = [
+//             ScheduleTask(name: "Deep Work", label: "Deep Work Block", startTime: calendar.date(bySettingHour: 9, minute: 0, second: 0, of: now)!, duration: 2 * 3600, category: .focus),
+//             ScheduleTask(name: "Team Meeting", label: "Team Meeting Block", startTime: calendar.date(bySettingHour: 11, minute: 30, second: 0, of: now)!, duration: 1 * 3600, category: .admin),
+//             ScheduleTask(name: "Lunch Break", label: "Lunch Break Block", startTime: calendar.date(bySettingHour: 13, minute: 0, second: 0, of: now)!, duration: 1 * 3600, category: .freeTime),
+//             ScheduleTask(name: "Project Planning", label: "Project Planning Block", startTime: calendar.date(bySettingHour: 14, minute: 0, second: 0, of: now)!, duration: 1.5 * 3600, category: .focus)
+//         ]
+//         TimelineView(tasks: sampleTasks, sessionState: .work, selectedDate: now, content: { task, now, debugMode, _ in
+//             TaskBlockView(task: task, hourWidth: 150, now: now, debugMode: debugMode, isPausedByUser: false, trail: [])
+//         })
+//     }
+// }
 
 /// 30-min and hour grid lines
 private struct GridLines: View {

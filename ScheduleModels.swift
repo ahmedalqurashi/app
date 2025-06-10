@@ -3,6 +3,7 @@ import SwiftUI
 public struct ScheduleTask: Identifiable, Equatable {
     public let id: UUID
     public let name: String
+    public let label: String
     public let startTime: Date
     public let duration: TimeInterval
     public let category: TaskCategory
@@ -11,16 +12,17 @@ public struct ScheduleTask: Identifiable, Equatable {
         return startTime.addingTimeInterval(duration)
     }
     
-    public init(id: UUID = UUID(), name: String, startTime: Date, duration: TimeInterval, category: TaskCategory) {
+    public init(id: UUID = UUID(), name: String, label: String, startTime: Date, duration: TimeInterval, category: TaskCategory) {
         self.id = id
         self.name = name
+        self.label = label
         self.startTime = startTime
         self.duration = duration
         self.category = category
     }
     
     public static func == (lhs: ScheduleTask, rhs: ScheduleTask) -> Bool {
-        lhs.id == rhs.id && lhs.name == rhs.name && lhs.startTime == rhs.startTime && lhs.duration == rhs.duration && lhs.category == rhs.category
+        lhs.id == rhs.id && lhs.name == rhs.name && lhs.label == rhs.label && lhs.startTime == rhs.startTime && lhs.duration == rhs.duration && lhs.category == rhs.category
     }
 }
 

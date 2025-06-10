@@ -13,8 +13,6 @@ struct ContentView: View {
     @Binding var sessionState: SessionState
     var taskTrails: [UUID: [(start: Date, end: Date, isFocus: Bool)]]
     @State private var showSheet = false
-    @State private var workTimerValue: TimeInterval = 0
-    @State private var breakTimerValue: TimeInterval = 0
     @State private var timerRunning = false
     @State private var lastWorkBlockId: UUID? = nil
     @State private var timerColor: Color = Color.gray
@@ -29,12 +27,17 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var lastBlockType: String = "work" // "work" or "break"
     @State private var blockStartTime: Date = Date()
-    @State private var selectedDate: Date = Date()
+    @Binding var selectedDate: Date
     @State private var showDatePicker: Bool = false
-    @State private var totalBreakTime: TimeInterval = 0
-    @State private var breakSessionStart: Date? = nil
+    @State private var previousSessionState: SessionState = .none
+    let workTotal: TimeInterval
+    let breakTotal: TimeInterval
     
     private let darkPurple = Color(red: 0.4, green: 0.0, blue: 0.7)
+    
+    // Block sheet state
+    @State private var showBlockSheet = false
+    @State private var selectedBlock: ScheduleTask? = nil
     
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -42,8 +45,8 @@ struct ContentView: View {
                 TodayHeader(
                     statusText: statusText,
                     statusColor: statusColor,
-                    workTime: workTimerValue,
-                    breakTime: breakTimerValue,
+                    workTime: workTotal,
+                    breakTime: breakTotal,
                     activeWork: isWorkTimerActive,
                     activeBreak: isBreakTimerActive,
                     selectedDate: $selectedDate,
@@ -87,35 +90,34 @@ struct ContentView: View {
                 restoreAppState()
             }
         }
-        .onChange(of: now) { _ in
-            updateTotalWorkTimer()
-            incrementTimers()
-            // Update breakTimerValue only if in break session
-            if sessionState == .breakSession, let start = breakSessionStart {
-                breakTimerValue = totalBreakTime + now.timeIntervalSince(start)
-            } else {
-                breakTimerValue = totalBreakTime
-            }
-        }
-        .onChange(of: sessionState) { newState in
-            // Start break session
-            if newState == .breakSession, breakSessionStart == nil {
-                breakSessionStart = now
-            }
-            // End break session
-            if newState != .breakSession, let start = breakSessionStart {
-                totalBreakTime += now.timeIntervalSince(start)
-                breakSessionStart = nil
-            }
-        }
     }
     
     private var timelineSection: some View {
         TimelineView(tasks: scheduledTasks, sessionState: sessionState, selectedDate: selectedDate) { task, now, debug, paused in
             let trail = taskTrails[task.id] ?? []
             TaskBlockView(task: task, hourWidth: 150, now: now, debugMode: debug, isPausedByUser: sessionState == .paused, trail: trail)
+                .onTapGesture {
+                    selectedBlock = task
+                    showBlockSheet = true
+                }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .sheet(isPresented: $showBlockSheet) {
+            if let block = selectedBlock {
+                BlockInfoSheet(
+                    block: block,
+                    onDelete: {
+                        if let idx = scheduledTasks.firstIndex(where: { $0.id == block.id }) {
+                            scheduledTasks.remove(at: idx)
+                        }
+                        showBlockSheet = false
+                    },
+                    onClose: { showBlockSheet = false },
+                    scheduledTasks: $scheduledTasks
+                )
+                .presentationDetents([.fraction(0.45)])
+            }
+        }
     }
     
     private var statusColor: Color {
@@ -148,6 +150,7 @@ struct ContentView: View {
         }
 
         var body: some View {
+            let workColor = Color(red: 0.6, green: 0.1, blue: 1.0)
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(statusText)
@@ -171,11 +174,11 @@ struct ContentView: View {
                     HStack(spacing: 6) {
                         if activeWork {
                             Rectangle()
-                                .fill(Color(red: 0.6, green: 0.1, blue: 1.0))
+                                .fill(workColor)
                                 .frame(width: 5, height: 22)
                                 .cornerRadius(2)
                         }
-                        TimerDisplayView(timeValue: workTime, isActive: activeWork, color: Color(red: 0.6, green: 0.1, blue: 1.0), showBullet: false)
+                        TimerDisplayView(timeValue: workTime, isActive: activeWork, color: workColor, showBullet: false)
                     }
                     HStack(spacing: 6) {
                         if activeBreak {
@@ -219,9 +222,9 @@ struct ContentView: View {
     }
 
     private var workTimerString: String {
-        let hours = Int(workTimerValue) / 3600
-        let minutes = (Int(workTimerValue) % 3600) / 60
-        let seconds = Int(workTimerValue) % 60
+        let hours = Int(workTotal) / 3600
+        let minutes = (Int(workTotal) % 3600) / 60
+        let seconds = Int(workTotal) % 60
         if hours > 0 {
             return String(format: "%02d:%02d", hours, minutes)
         } else {
@@ -230,9 +233,9 @@ struct ContentView: View {
     }
 
     private var breakTimerString: String {
-        let hours = Int(breakTimerValue) / 3600
-        let minutes = (Int(breakTimerValue) % 3600) / 60
-        let seconds = Int(breakTimerValue) % 60
+        let hours = Int(breakTotal) / 3600
+        let minutes = (Int(breakTotal) % 3600) / 60
+        let seconds = Int(breakTotal) % 60
         if hours > 0 {
             return String(format: "%02d:%02d", hours, minutes)
         } else {
@@ -240,35 +243,10 @@ struct ContentView: View {
         }
     }
     
-    private func updateTotalWorkTimer() {
-        let today = Calendar.current.startOfDay(for: now)
-        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: today)!
-        workTimerValue = scheduledTasks
-            .filter { ($0.category == .focus || $0.category == .manualFocus) && $0.startTime >= today && $0.startTime < tomorrow }
-            .reduce(0.0) { sum, task in
-                let end = min(task.endTime, now)
-                let start = max(task.startTime, today)
-                return sum + max(0, end.timeIntervalSince(start))
-            }
-        // Remove breakTimerValue calculation from here
-    }
-
-    private func incrementTimers() {
-        // No need to increment breakTimerValue here, handled in updateTotalWorkTimer
-        if let currentBlock = activeBlock(at: now) {
-            timerRunning = false
-            timerColor = timerDefaultColor
-        } else {
-            timerRunning = false
-            timerColor = timerDefaultColor
-            lastWorkBlockId = nil
-        }
-    }
-
     // Returns the latest overlapping block (manual focus wins over older blocks)
     private func activeBlock(at date: Date) -> ScheduleTask? {
         scheduledTasks
-            .filter { $0.startTime <= date && date < $0.endTime }
+            .filter { ($0.startTime ... $0.endTime).contains(date) }
             .max(by: { $0.startTime < $1.startTime })
     }
 
@@ -276,8 +254,6 @@ struct ContentView: View {
     private func saveAppState() {
         let defaults = UserDefaults.standard
         defaults.set(Date(), forKey: "lastBackgroundedDate")
-        defaults.set(workTimerValue, forKey: "workTimerValue")
-        defaults.set(breakTimerValue, forKey: "breakTimerValue")
         defaults.set(sessionState == .paused, forKey: "isPausedByUser")
         defaults.set(lastBlockType, forKey: "lastBlockType")
         defaults.set(blockStartTime, forKey: "blockStartTime")
@@ -290,18 +266,7 @@ struct ContentView: View {
             let wasPaused = defaults.bool(forKey: "isPausedByUser")
             let lastType = defaults.string(forKey: "lastBlockType") ?? "work"
             let blockStart = defaults.object(forKey: "blockStartTime") as? Date ?? Date()
-            if !wasPaused {
-                if lastType == "work" {
-                    workTimerValue = defaults.double(forKey: "workTimerValue") + elapsed
-                } else {
-                    breakTimerValue = defaults.double(forKey: "breakTimerValue") + elapsed
-                }
-                blockStartTime = blockStart.addingTimeInterval(elapsed)
-            } else {
-                workTimerValue = defaults.double(forKey: "workTimerValue")
-                breakTimerValue = defaults.double(forKey: "breakTimerValue")
-                blockStartTime = blockStart
-            }
+            blockStartTime = blockStart.addingTimeInterval(elapsed)
             sessionState = wasPaused ? .paused : .work
             lastBlockType = lastType
         }
@@ -318,7 +283,8 @@ struct MinimalDarkSheet: View {
     @State private var endIsPM: Bool = false
     @State private var selectedMode: Int = 0 // 0 = Pomodoro, 1 = Huberman
     let modes = ["Pomodoro", "Huberman"]
-    var onExecute: (String, Date?, Date?) -> Void
+    var onExecute: (String, Date?, Date?, Int) -> Void
+    @Binding var selectedDate: Date
     
     private var startTime: Date? {
         guard let hourRaw = Int(startHour), let minute = Int(startMinute), hourRaw >= 1, hourRaw <= 12, minute < 60 else { return nil }
@@ -350,7 +316,7 @@ struct MinimalDarkSheet: View {
                 .padding(.top, 8)
                 .frame(maxWidth: 320)
                 if selectedMode == 0 {
-                    // Start Time Card
+                    // Pomodoro UI
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             Text("Start Time")
@@ -371,7 +337,6 @@ struct MinimalDarkSheet: View {
                     .background(Color(red: 28/255, green: 28/255, blue: 30/255))
                     .cornerRadius(20)
                     .shadow(color: Color.black.opacity(0.18), radius: 8, x: 0, y: 4)
-                    // End Time Card
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             Text("End Time")
@@ -395,7 +360,6 @@ struct MinimalDarkSheet: View {
                     .background(Color(red: 28/255, green: 28/255, blue: 30/255))
                     .cornerRadius(20)
                     .shadow(color: Color.black.opacity(0.18), radius: 8, x: 0, y: 4)
-                    // Intended Hours Card
                     VStack(alignment: .leading, spacing: 12) {
                         HStack(spacing: 8) {
                             Circle()
@@ -423,7 +387,7 @@ struct MinimalDarkSheet: View {
                     .shadow(color: Color.black.opacity(0.18), radius: 8, x: 0, y: 4)
                     Spacer()
                     Button(action: {
-                        onExecute(intendedHours, startTime, endTime)
+                        onExecute(intendedHours, startTime, endTime, selectedMode)
                     }) {
                         Text("Execute")
                             .font(.headline)
@@ -438,9 +402,91 @@ struct MinimalDarkSheet: View {
                     .padding(.horizontal, 8)
                     .disabled(!allInputsFilled)
                 } else if selectedMode == 1 {
+                    // Huberman UI (identical for now, but can be customized later)
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Start Time")
+                                .font(.headline)
+                                .foregroundColor(.white)
+                            Spacer()
+                            Picker("AM/PM", selection: $startIsPM) {
+                                Text("AM").tag(false)
+                                Text("PM").tag(true)
+                            }
+                            .pickerStyle(.segmented)
+                            .frame(width: 100)
+                        }
+                        TimeInputCardView(hour: $startHour, minute: $startMinute, title: "", subtitle: "")
+                    }
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 20)
+                    .background(Color(red: 28/255, green: 28/255, blue: 30/255))
+                    .cornerRadius(20)
+                    .shadow(color: Color.black.opacity(0.18), radius: 8, x: 0, y: 4)
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("End Time")
+                                .font(.headline)
+                                .foregroundColor(.white)
+                            Spacer()
+                            Picker("AM/PM", selection: $endIsPM) {
+                                Text("AM").tag(false)
+                                Text("PM").tag(true)
+                            }
+                            .pickerStyle(.segmented)
+                            .frame(width: 100)
+                        }
+                        TimeInputCardView(hour: $endHour, minute: $endMinute, title: "", subtitle: "")
+                            .onChange(of: endHour) { newValue in
+                                autoToggleEndIsPM()
+                            }
+                    }
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 20)
+                    .background(Color(red: 28/255, green: 28/255, blue: 30/255))
+                    .cornerRadius(20)
+                    .shadow(color: Color.black.opacity(0.18), radius: 8, x: 0, y: 4)
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(!intendedHours.isEmpty ? Color.blue : Color.gray.opacity(0.5))
+                                .frame(width: 14, height: 14)
+                            Text("Intended Hours")
+                                .font(.headline)
+                                .foregroundColor(.white)
+                        }
+                        Text("How many hours do you intend to work?")
+                            .font(.subheadline)
+                            .foregroundColor(Color(white: 0.7))
+                        TextField("Enter hours", text: $intendedHours)
+                            .keyboardType(.numberPad)
+                            .padding(12)
+                            .background(Color(.systemGray5).opacity(0.18))
+                            .cornerRadius(12)
+                            .foregroundColor(.white)
+                            .font(.title2)
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(20)
+                    .background(Color(red: 28/255, green: 28/255, blue: 30/255))
+                    .cornerRadius(20)
+                    .shadow(color: Color.black.opacity(0.18), radius: 8, x: 0, y: 4)
                     Spacer()
-                    Text("") // Empty placeholder for Huberman mode
-                    Spacer()
+                    Button(action: {
+                        onExecute(intendedHours, startTime, endTime, selectedMode)
+                    }) {
+                        Text("Execute")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(allInputsFilled ? Color.blue : Color.gray.opacity(0.1))
+                            .cornerRadius(16)
+                            .animation(.easeInOut, value: allInputsFilled)
+                    }
+                    .padding(.bottom, 32)
+                    .padding(.horizontal, 8)
+                    .disabled(!allInputsFilled)
                 }
             }
             .padding(.top, 32)
@@ -708,7 +754,7 @@ struct TimeInputCardView_Previews: PreviewProvider {
 
 struct ContentView_Previews: PreviewProvider {
     static var previews: some View {
-        ContentView(scheduledTasks: .constant([]), sessionState: .constant(.paused), taskTrails: [:], resetScroll: .constant(false), now: .constant(Date()))
+        ContentView(scheduledTasks: .constant([]), sessionState: .constant(.paused), taskTrails: [:], resetScroll: .constant(false), now: .constant(Date()), selectedDate: .constant(Date()), workTotal: 0, breakTotal: 0)
     }
 }
 
@@ -738,6 +784,117 @@ struct TimerDisplayView: View {
                 .shadow(color: isActive ? color.opacity(0.7) : .clear, radius: 6, x: 0, y: 0)
                 .frame(width: 70, alignment: .trailing)
                 .padding(.vertical, 4)
+        }
+    }
+}
+
+struct BlockInfoSheet: View {
+    @State private var editedLabel: String
+    let block: ScheduleTask
+    let onDelete: () -> Void
+    let onClose: () -> Void
+    @Binding var scheduledTasks: [ScheduleTask]
+    
+    init(block: ScheduleTask, onDelete: @escaping () -> Void, onClose: @escaping () -> Void, scheduledTasks: Binding<[ScheduleTask]>) {
+        self.block = block
+        self.onDelete = onDelete
+        self.onClose = onClose
+        self._scheduledTasks = scheduledTasks
+        self._editedLabel = State(initialValue: block.label)
+    }
+    var body: some View {
+        VStack(spacing: 24) {
+            HStack {
+                Text("Block Details")
+                    .font(.title2).bold()
+                    .foregroundColor(.white)
+                Spacer()
+                Button(action: onDelete) {
+                    Image(systemName: "trash")
+                        .foregroundColor(.red)
+                        .font(.title2)
+                        .padding(8)
+                        .background(Color(.systemGray6).opacity(0.18))
+                        .clipShape(Circle())
+                }
+            }
+            .padding(.horizontal)
+            .padding(.top, 8)
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Image(systemName: "calendar")
+                        .foregroundColor(.blue)
+                    Text("Date: ")
+                        .foregroundColor(.gray)
+                    Text(formattedDate(block.startTime))
+                        .foregroundColor(.white)
+                }
+                HStack {
+                    Image(systemName: "clock")
+                        .foregroundColor(.purple)
+                    Text("Time: ")
+                        .foregroundColor(.gray)
+                    Text("\(formattedTime(block.startTime)) - \(formattedTime(block.endTime))")
+                        .foregroundColor(.white)
+                }
+                HStack(alignment: .top) {
+                    Image(systemName: "pencil")
+                        .foregroundColor(.green)
+                        .padding(.top, 2)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("What to do:")
+                            .foregroundColor(.gray)
+                        TextField("Label", text: $editedLabel, onCommit: saveLabel)
+                            .foregroundColor(.white)
+                            .font(.body)
+                            .padding(10)
+                            .background(Color(.systemGray6).opacity(0.18))
+                            .cornerRadius(10)
+                            .onSubmit { saveLabel() }
+                    }
+                }
+            }
+            .font(.body)
+            .padding(.horizontal)
+            Spacer()
+            Button(action: {
+                saveLabel()
+                onClose()
+            }) {
+                Text("Close")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color.blue)
+                    .cornerRadius(16)
+            }
+            .padding(.horizontal)
+            .padding(.bottom, 12)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(Color.black.opacity(0.92))
+                .shadow(color: Color.black.opacity(0.18), radius: 16, x: 0, y: 8)
+        )
+        .padding(.horizontal, 8)
+        .padding(.top, 8)
+    }
+    func formattedDate(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        return f.string(from: date)
+    }
+    func formattedTime(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.timeStyle = .short
+        return f.string(from: date)
+    }
+    func saveLabel() {
+        if let idx = scheduledTasks.firstIndex(where: { $0.id == block.id }) {
+            var updated = scheduledTasks[idx]
+            updated = ScheduleTask(id: updated.id, name: updated.name, label: editedLabel, startTime: updated.startTime, duration: updated.duration, category: updated.category)
+            scheduledTasks[idx] = updated
         }
     }
 }
