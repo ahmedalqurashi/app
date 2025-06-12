@@ -209,22 +209,24 @@ struct ContentView: View {
     }
 
     private var workTimerString: String {
-        let hours = Int(timerStore.workTotal) / 3600
-        let minutes = (Int(timerStore.workTotal) % 3600) / 60
-        let seconds = Int(timerStore.workTotal) % 60
+        let total = Int(timerStore.workTotal)
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        let seconds = total % 60
         if hours > 0 {
-            return String(format: "%02d:%02d", hours, minutes)
+            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
         } else {
             return String(format: "%02d:%02d", minutes, seconds)
         }
     }
 
     private var breakTimerString: String {
-        let hours = Int(timerStore.breakTotal) / 3600
-        let minutes = (Int(timerStore.breakTotal) % 3600) / 60
-        let seconds = Int(timerStore.breakTotal) % 60
+        let total = Int(timerStore.breakTotal)
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        let seconds = total % 60
         if hours > 0 {
-            return String(format: "%02d:%02d", hours, minutes)
+            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
         } else {
             return String(format: "%02d:%02d", minutes, seconds)
         }
@@ -745,10 +747,11 @@ struct TimerDisplayView: View {
     let color: Color
     var showBullet: Bool = true
     var body: some View {
-        let hours = Int(timeValue) / 3600
-        let minutes = (Int(timeValue) % 3600) / 60
-        let seconds = Int(timeValue) % 60
-        let timeString: String = hours > 0 ? String(format: "%02d:%02d", hours, minutes) : String(format: "%02d:%02d", minutes, seconds)
+        let total = Int(timeValue)
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        let seconds = total % 60
+        let timeString: String = hours > 0 ? String(format: "%d:%02d:%02d", hours, minutes, seconds) : String(format: "%02d:%02d", minutes, seconds)
         HStack(spacing: 8) {
             if showBullet && isActive {
                 GeometryReader { geo in
@@ -763,7 +766,7 @@ struct TimerDisplayView: View {
                 .font(.system(size: 22, weight: .bold, design: .monospaced))
                 .foregroundColor(isActive ? color : Color.gray)
                 .shadow(color: isActive ? color.opacity(0.7) : .clear, radius: 6, x: 0, y: 0)
-                .frame(width: 70, alignment: .trailing)
+                .frame(width: hours > 0 ? 100 : 74, alignment: .trailing)
                 .padding(.vertical, 4)
         }
     }

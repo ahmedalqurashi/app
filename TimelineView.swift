@@ -17,6 +17,9 @@ struct TimelineView<Content: View>: View {
     @EnvironmentObject private var timerStore: TimerStore
     private var currentTimeMarkerID: String { "currentTime-\(Int(Date().timeIntervalSince1970))" }
     
+    @State private var showTraceSheet = false
+    @State private var selectedTrace: TimeTrace? = nil
+    
     init(tasks: [ScheduleTask], sessionState: SessionState, selectedDate: Date, @ViewBuilder content: @escaping (ScheduleTask, Date, Bool, Bool) -> Content) {
         self.tasks = tasks
         self.sessionState = sessionState
@@ -41,6 +44,29 @@ struct TimelineView<Content: View>: View {
         .onChange(of: scenePhase) {
             if scenePhase == .active {
                 requestCentering()
+            }
+        }
+        .sheet(isPresented: $showTraceSheet) {
+            if let trace = selectedTrace {
+                TraceInfoSheet(trace: trace,
+                              onDelete: {
+                                  if let idx = timerStore.traces.firstIndex(where: { $0.id == trace.id }) {
+                                      timerStore.traces.remove(at: idx)
+                                      timerStore.saveTraces()
+                                      timerStore.recalculateTotalsFromTraces()
+                                  }
+                                  showTraceSheet = false
+                              },
+                              onUpdate: { updatedTrace in
+                                  if let idx = timerStore.traces.firstIndex(where: { $0.id == updatedTrace.id }) {
+                                      timerStore.traces[idx] = updatedTrace
+                                      timerStore.saveTraces()
+                                      timerStore.recalculateTotalsFromTraces()
+                                  }
+                                  showTraceSheet = false
+                              },
+                              onClose: { showTraceSheet = false })
+                    .presentationDetents([.medium, .large])
             }
         }
     }
@@ -115,6 +141,10 @@ struct TimelineView<Content: View>: View {
                                 .frame(height: max(2, yEnd - yStart))
                                 .offset(y: yStart)
                                 .zIndex(1)                 // below the live trace, above grid lines
+                                .onLongPressGesture(minimumDuration: 1.0) {
+                                    selectedTrace = t
+                                    showTraceSheet = true
+                                }
                         }
                         // --- LIVE TRACE (current bucket) --------------------------------------
                         if Calendar.current.isDateInToday(selectedDate),

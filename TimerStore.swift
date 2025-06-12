@@ -14,10 +14,19 @@ struct TimerSnapshot: Codable {
 
 // MARK: - TimeTrace model
 struct TimeTrace: Identifiable, Codable {
-    let id       = UUID()
-    let start    : Date
-    let end      : Date
-    let isFocus  : Bool      // true = work, false = break
+    let id       : UUID
+    var start    : Date
+    var end      : Date
+    var isFocus  : Bool      // true = work, false = break
+    var label    : String    // label for what was done during the trace
+    
+    init(id: UUID = UUID(), start: Date, end: Date, isFocus: Bool, label: String = "") {
+        self.id = id
+        self.start = start
+        self.end = end
+        self.isFocus = isFocus
+        self.label = label
+    }
 }
 
 @MainActor
@@ -41,7 +50,15 @@ final class TimerStore: ObservableObject {
         restore()
         if let data = UserDefaults.standard.data(forKey: traceKey),
            let saved = try? JSONDecoder().decode([TimeTrace].self, from: data) {
-            traces = saved
+            // Migrate traces without label
+            traces = saved.map { t in
+                if #available(iOS 15.0, *), t.label.isEmpty == false {
+                    return t
+                } else {
+                    // If label is missing (old data), add empty label
+                    return TimeTrace(id: t.id, start: t.start, end: t.end, isFocus: t.isFocus, label: t.label)
+                }
+            }
         }
         heartbeat = Timer.publish(every: 1, on: .main, in: .common)
             .autoconnect()
@@ -209,10 +226,12 @@ final class TimerStore: ObservableObject {
         let elapsed = date.timeIntervalSince(start)
         if sessionState == .work         { workTotal  += elapsed }
         else if sessionState == .breakSession { breakTotal += elapsed }
+        let defaultLabel = (sessionState == .work) ? "Focus" : "Rest"
         traces.append(
             TimeTrace(start: start,
                       end:   date,
-                      isFocus: sessionState == .work)
+                      isFocus: sessionState == .work,
+                      label: defaultLabel)
         )
         bucketStart   = nil
         runningBucket = .none
@@ -240,5 +259,11 @@ final class TimerStore: ObservableObject {
         if let data = try? JSONEncoder().encode(traces) {
             UserDefaults.standard.set(data, forKey: traceKey)
         }
+    }
+
+    // Call this after traces are edited or deleted to keep totals accurate
+    func recalculateTotalsFromTraces() {
+        workTotal = traces.filter { $0.isFocus }.reduce(0) { $0 + $1.end.timeIntervalSince($1.start) }
+        breakTotal = traces.filter { !$0.isFocus }.reduce(0) { $0 + $1.end.timeIntervalSince($1.start) }
     }
 } 
