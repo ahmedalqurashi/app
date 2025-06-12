@@ -1,5 +1,5 @@
 import Foundation
 
-enum SessionState {
+enum SessionState: String, Codable {
     case none, work, breakSession, paused
 } 

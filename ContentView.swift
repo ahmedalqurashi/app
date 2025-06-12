@@ -8,9 +8,8 @@
 import SwiftUI
 
 struct ContentView: View {
+    @EnvironmentObject var timerStore: TimerStore
     let calendar = Calendar.current
-    @Binding var scheduledTasks: [ScheduleTask]
-    @Binding var sessionState: SessionState
     var taskTrails: [UUID: [(start: Date, end: Date, isFocus: Bool)]]
     @State private var showSheet = false
     @State private var timerRunning = false
@@ -21,17 +20,12 @@ struct ContentView: View {
     @State private var timerDefaultColor: Color = Color.gray
     @State private var selectedMode: String = "Pomodoro"
     let modes = ["Pomodoro", "Huberman"]
-    @Binding var resetScroll: Bool
     @Namespace private var statusAnim
-    @Binding var now: Date
     @Environment(\.scenePhase) private var scenePhase
     @State private var lastBlockType: String = "work" // "work" or "break"
     @State private var blockStartTime: Date = Date()
-    @Binding var selectedDate: Date
     @State private var showDatePicker: Bool = false
     @State private var previousSessionState: SessionState = .none
-    let workTotal: TimeInterval
-    let breakTotal: TimeInterval
     
     private let darkPurple = Color(red: 0.4, green: 0.0, blue: 0.7)
     
@@ -45,11 +39,11 @@ struct ContentView: View {
                 TodayHeader(
                     statusText: statusText,
                     statusColor: statusColor,
-                    workTime: workTotal,
-                    breakTime: breakTotal,
+                    workTime: liveWorkTotal,
+                    breakTime: liveBreakTotal,
                     activeWork: isWorkTimerActive,
                     activeBreak: isBreakTimerActive,
-                    selectedDate: $selectedDate,
+                    selectedDate: $timerStore.selectedDate,
                     showDatePicker: $showDatePicker
                 )
                 timelineSection
@@ -62,7 +56,7 @@ struct ContentView: View {
             VStack {
                 DatePicker(
                     "Select Date",
-                    selection: $selectedDate,
+                    selection: $timerStore.selectedDate,
                     displayedComponents: .date
                 )
                 .datePickerStyle(.graphical)
@@ -74,28 +68,19 @@ struct ContentView: View {
             .padding()
             .background(Color.black)
         }
-        .onAppear {
-            // Clear saved timer state on cold launch
-            UserDefaults.standard.removeObject(forKey: "lastBackgroundedDate")
-            UserDefaults.standard.removeObject(forKey: "workTimerValue")
-            UserDefaults.standard.removeObject(forKey: "breakTimerValue")
-            UserDefaults.standard.removeObject(forKey: "isPausedByUser")
-            UserDefaults.standard.removeObject(forKey: "lastBlockType")
-            UserDefaults.standard.removeObject(forKey: "blockStartTime")
-        }
-        .onChange(of: scenePhase) {
-            if scenePhase == .background || scenePhase == .inactive {
-                saveAppState()
-            } else if scenePhase == .active {
-                restoreAppState()
-            }
-        }
+        .onChange(of: timerStore.sessionState) { _ in timerStore.save() }
+        .onChange(of: timerStore.runningBucket) { _ in timerStore.save() }
+        .onChange(of: timerStore.bucketStart) { _ in timerStore.save() }
+        .onChange(of: timerStore.workTotal) { _ in timerStore.save() }
+        .onChange(of: timerStore.breakTotal) { _ in timerStore.save() }
+        .onChange(of: timerStore.scheduledTasksByDate) { _ in timerStore.save() }
+        .onChange(of: timerStore.selectedDate) { _ in timerStore.save() }
     }
     
     private var timelineSection: some View {
-        TimelineView(tasks: scheduledTasks, sessionState: sessionState, selectedDate: selectedDate) { task, now, debug, paused in
+        TimelineView(tasks: timerStore.scheduledTasks, sessionState: timerStore.sessionState, selectedDate: timerStore.selectedDate) { task, now, debug, paused in
             let trail = taskTrails[task.id] ?? []
-            TaskBlockView(task: task, hourWidth: 150, now: now, debugMode: debug, isPausedByUser: sessionState == .paused, trail: trail)
+            TaskBlockView(task: task, hourWidth: 150, now: now, debugMode: debug, isPausedByUser: timerStore.sessionState == .paused, trail: trail)
                 .onTapGesture {
                     selectedBlock = task
                     showBlockSheet = true
@@ -107,13 +92,15 @@ struct ContentView: View {
                 BlockInfoSheet(
                     block: block,
                     onDelete: {
-                        if let idx = scheduledTasks.firstIndex(where: { $0.id == block.id }) {
-                            scheduledTasks.remove(at: idx)
+                        if let idx = timerStore.scheduledTasks.firstIndex(where: { $0.id == block.id }) {
+                            var tasks = timerStore.scheduledTasks
+                            tasks.remove(at: idx)
+                            timerStore.scheduledTasks = tasks
                         }
                         showBlockSheet = false
                     },
                     onClose: { showBlockSheet = false },
-                    scheduledTasks: $scheduledTasks
+                    scheduledTasks: .constant(timerStore.scheduledTasks)
                 )
                 .presentationDetents([.fraction(0.45)])
             }
@@ -200,14 +187,14 @@ struct ContentView: View {
     }
     
     private var isWorkTimerActive: Bool {
-        if let currentBlock = activeBlock(at: now) {
-            return (currentBlock.category == .focus || currentBlock.category == .manualFocus) && sessionState == .work
+        if let currentBlock = activeBlock(at: timerStore.now) {
+            return (currentBlock.category == .focus || currentBlock.category == .manualFocus) && timerStore.sessionState == .work
         }
         return false
     }
 
     private var isBreakTimerActive: Bool {
-        sessionState == .breakSession
+        timerStore.sessionState == .breakSession
     }
 
     private var statusText: String {
@@ -222,9 +209,9 @@ struct ContentView: View {
     }
 
     private var workTimerString: String {
-        let hours = Int(workTotal) / 3600
-        let minutes = (Int(workTotal) % 3600) / 60
-        let seconds = Int(workTotal) % 60
+        let hours = Int(timerStore.workTotal) / 3600
+        let minutes = (Int(timerStore.workTotal) % 3600) / 60
+        let seconds = Int(timerStore.workTotal) % 60
         if hours > 0 {
             return String(format: "%02d:%02d", hours, minutes)
         } else {
@@ -233,9 +220,9 @@ struct ContentView: View {
     }
 
     private var breakTimerString: String {
-        let hours = Int(breakTotal) / 3600
-        let minutes = (Int(breakTotal) % 3600) / 60
-        let seconds = Int(breakTotal) % 60
+        let hours = Int(timerStore.breakTotal) / 3600
+        let minutes = (Int(timerStore.breakTotal) % 3600) / 60
+        let seconds = Int(timerStore.breakTotal) % 60
         if hours > 0 {
             return String(format: "%02d:%02d", hours, minutes)
         } else {
@@ -245,31 +232,25 @@ struct ContentView: View {
     
     // Returns the latest overlapping block (manual focus wins over older blocks)
     private func activeBlock(at date: Date) -> ScheduleTask? {
-        scheduledTasks
+        timerStore.scheduledTasks
             .filter { ($0.startTime ... $0.endTime).contains(date) }
             .max(by: { $0.startTime < $1.startTime })
     }
 
-    // --- State Persistence ---
-    private func saveAppState() {
-        let defaults = UserDefaults.standard
-        defaults.set(Date(), forKey: "lastBackgroundedDate")
-        defaults.set(sessionState == .paused, forKey: "isPausedByUser")
-        defaults.set(lastBlockType, forKey: "lastBlockType")
-        defaults.set(blockStartTime, forKey: "blockStartTime")
-    }
-
-    private func restoreAppState() {
-        let defaults = UserDefaults.standard
-        if let lastDate = defaults.object(forKey: "lastBackgroundedDate") as? Date {
-            let elapsed = Date().timeIntervalSince(lastDate)
-            let wasPaused = defaults.bool(forKey: "isPausedByUser")
-            let lastType = defaults.string(forKey: "lastBlockType") ?? "work"
-            let blockStart = defaults.object(forKey: "blockStartTime") as? Date ?? Date()
-            blockStartTime = blockStart.addingTimeInterval(elapsed)
-            sessionState = wasPaused ? .paused : .work
-            lastBlockType = lastType
+    // Computed properties for live totals
+    private var liveWorkTotal: TimeInterval {
+        var total = timerStore.workTotal
+        if timerStore.sessionState == .work, let start = timerStore.bucketStart {
+            total += timerStore.now.timeIntervalSince(start)
         }
+        return max(0, total)
+    }
+    private var liveBreakTotal: TimeInterval {
+        var total = timerStore.breakTotal
+        if timerStore.sessionState == .breakSession, let start = timerStore.bucketStart {
+            total += timerStore.now.timeIntervalSince(start)
+        }
+        return max(0, total)
     }
 }
 
@@ -307,7 +288,7 @@ struct MinimalDarkSheet: View {
             Color.black.ignoresSafeArea()
             VStack(spacing: 24) {
                 Picker("Mode", selection: $selectedMode) {
-                    ForEach(0..<modes.count, id: \ .self) { i in
+                    ForEach(0..<modes.count, id: \.self) { i in
                         Text(modes[i])
                     }
                 }
@@ -754,7 +735,7 @@ struct TimeInputCardView_Previews: PreviewProvider {
 
 struct ContentView_Previews: PreviewProvider {
     static var previews: some View {
-        ContentView(scheduledTasks: .constant([]), sessionState: .constant(.paused), taskTrails: [:], resetScroll: .constant(false), now: .constant(Date()), selectedDate: .constant(Date()), workTotal: 0, breakTotal: 0)
+        ContentView(taskTrails: [:])
     }
 }
 

@@ -1,146 +1,78 @@
 import SwiftUI
 
 struct MainTabView: View {
+    @EnvironmentObject var timerStore: TimerStore
     @State private var selectedTab = 1 // 0 = profile, 1 = home, 2 = settings
     @State private var showSheet = false
-    //@State private var scheduledTasks: [ScheduleTask] = []
-    @State private var now: Date = Date()
-    @State private var timer: Timer? = nil
-    @State private var sessionState: SessionState = .none
     @State private var timelineShouldResetScroll = false
-    @State private var sessionResetSignal: Int = 0
-    @State private var dragOffset: CGFloat = 0
-    @State private var previousSessionState: SessionState? = nil
     @State private var taskTrails: [UUID: [(start: Date, end: Date, isFocus: Bool)]] = [:]
-    @State private var ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-    @State private var sessionStartTime: Date? = nil
-    @State private var totalWorkTime: TimeInterval = 0
-    @State private var totalBreakTime: TimeInterval = 0
-    @State private var totalTimerStart: Date? = nil
-    @State private var runningBucketState: SessionState = .none
+    @State private var dragOffset: CGFloat = 0
+    @State private var sessionResetSignal: Int = 0
+    @State private var timer: Timer? = nil
+    @State private var now = Date()
+    @State private var previousSessionState: SessionState? = nil
     @State private var autoSwitchStates: Bool = false
     @State private var selectedMode: Int = 0
-    @State private var scheduledTasksByDate: [Date: [ScheduleTask]] = [:]
-    @State private var selectedDate: Date = Date()
+    private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    // Helper for binding to TimerStore properties
+    private func bind<Value>(_ keyPath: ReferenceWritableKeyPath<TimerStore, Value>) -> Binding<Value> {
+        let store = timerStore // capture the value once
+        return Binding(
+            get: { store[keyPath: keyPath] },
+            set: { store[keyPath: keyPath] = $0 }
+        )
+    }
 
     var body: some View {
         ZStack(alignment: .bottom) {
             mainContent
             customTabBar
         }
-        .onReceive(ticker) { _ in
-            let newNow = Date()
-            let dateKey = normalizedDate(selectedDate)
-            // 1. First extend / correct the manual block
-            if sessionState == .work, let i = (scheduledTasksByDate[dateKey] ?? []).lastIndex(where: { $0.category == .manualFocus && $0.startTime <= newNow }) {
-                var tasks = scheduledTasksByDate[dateKey] ?? []
-                let start = tasks[i].startTime
-                let live = newNow.timeIntervalSince(start) // exact seconds
-                tasks[i] = tasks[i].withDuration(live)
-                scheduledTasksByDate[dateKey] = tasks
-            }
-            // 2. Then use it for the trail & UI
-            if [.work, .breakSession].contains(sessionState) {
-                updateTrail(previousNow: now, currentNow: newNow)
-            }
-            // --- AUTO STATE SWITCHING LOGIC ---
-            if autoSwitchStates {
-                let previousBlock = (scheduledTasksByDate[dateKey] ?? []).first(where: { $0.contains(date: now) })
-                let currentBlock = (scheduledTasksByDate[dateKey] ?? []).first(where: { $0.contains(date: newNow) })
-                if previousBlock?.id != currentBlock?.id, let block = currentBlock {
-                    // Only switch if entering a new block
-                    if (block.category == .focus || block.category == .manualFocus) && sessionState != .work {
-                        // Entering a work block, switch to work mode
-                        handleTapToWork()
-                    } else if block.category == .freeTime && sessionState != .breakSession {
-                        // Entering a break block, switch to break mode
-                        handleTapToBreak()
-                    }
-                }
-            }
-            // Only update 'now' for the current session; remove per-session timer logic
-            now = newNow
-        }
         .sheet(isPresented: $showSheet) {
             MinimalDarkSheet(onExecute: { intended, start, end, mode in
                 showSheet = false
-                if let s = start, let e = end, let hours = Double(intended) {
-                    let startNow = Date()
-                    let totalWorkDuration = hours * 3600 // hours to seconds
-                    if mode == 1 {
-                        // Huberman mode
-                        applyHubermanSessions(startTime: startNow, endTime: e, totalWorkDuration: totalWorkDuration)
-                        if let _ = scheduledTasksByDate[normalizedDate(selectedDate)]?.first(where: { $0.name == "Huberman Focus" }) {
-                            now = startNow
-                            sessionState = .work
-                            sessionStartTime = startNow
-                            openBucket(for: .work, customStartTime: startNow)
-                            sessionResetSignal += 1
-                        }
-                    } else {
-                        // Pomodoro mode (default)
-                        applyPomodoroSessions(startTime: startNow, endTime: e, totalWorkDuration: totalWorkDuration)
-                        if let _ = scheduledTasksByDate[normalizedDate(selectedDate)]?.first(where: { $0.name == "Pomodoro Focus" }) {
-                            now = startNow
-                            sessionState = .work
-                            sessionStartTime = startNow
-                            openBucket(for: .work, customStartTime: startNow)
-                            sessionResetSignal += 1
-                        }
-                    }
-                    timelineShouldResetScroll.toggle()
+                guard let s = start, let e = end, let hours = Double(intended) else { return }
+                if mode == 1 {
+                    timerStore.applyHubermanSessions(startTime: s, endTime: e, totalWorkDuration: hours * 3600)
+                } else {
+                    timerStore.applyPomodoroSessions(startTime: s, endTime: e, totalWorkDuration: hours * 3600)
                 }
-            }, selectedDate: $selectedDate)
+                timerStore.save()
+                // ---- AUTO-START FIRST WORK SESSION ----
+                DispatchQueue.main.async {
+                    handleTapToWork()               // identical to pressing the button once
+                    selectedTab = 1                 // jump back to "Home" if needed
+                }
+            }, selectedDate: bind(\.selectedDate))
+        }
+        .onAppear {
+            // --- Restore sessionStartTime if timer is running after app relaunch ---
+            if (timerStore.sessionState == .work || timerStore.sessionState == .breakSession),
+               let bucketStart = timerStore.bucketStart {
+                // sessionStartTime = bucketStart
+            }
         }
     }
-//  ZStack {
-//             Color.black.ignoresSafeArea()
-//             GlowingEdgeView(isActive: true)
-//         }
+
     private var mainContent: some View {
-       VStack(spacing: 0) {
+        VStack(spacing: 0) {
             ZStack {
-                // Timeline background pulse
                 Color.black.ignoresSafeArea()
                 if isCurrentTaskActive {
                     Color.purple.opacity(isGlowing ? 0.10 : 0.04)
                         .ignoresSafeArea()
                         .animation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true), value: isGlowing)
                 }
-                // Remove Group and use switch directly
                 switch selectedTab {
                 case 0: AnyView(Text("Profile").foregroundColor(.white))
-                case 1: AnyView(ContentView(
-                    scheduledTasks: Binding(
-                        get: { scheduledTasksByDate[normalizedDate(selectedDate)] ?? [] },
-                        set: { scheduledTasksByDate[normalizedDate(selectedDate)] = $0 }
-                    ),
-                    sessionState: $sessionState,
-                    taskTrails: taskTrails,
-                    resetScroll: $timelineShouldResetScroll,
-                    now: $now,
-                    selectedDate: $selectedDate,
-                    workTotal: liveWorkTotal,
-                    breakTotal: liveBreakTotal
-                ))
+                case 1: AnyView(ContentView(taskTrails: taskTrails))
                 case 2: AnyView(settingsView)
-                default: AnyView(ContentView(
-                    scheduledTasks: Binding(
-                        get: { scheduledTasksByDate[normalizedDate(selectedDate)] ?? [] },
-                        set: { scheduledTasksByDate[normalizedDate(selectedDate)] = $0 }
-                    ),
-                    sessionState: $sessionState,
-                    taskTrails: taskTrails,
-                    resetScroll: $timelineShouldResetScroll,
-                    now: $now,
-                    selectedDate: $selectedDate,
-                    workTotal: liveWorkTotal,
-                    breakTotal: liveBreakTotal
-                ))
+                default: AnyView(ContentView(taskTrails: taskTrails))
                 }
                 if isCurrentTaskWorkSession {
                     GlowingEdgeView(isActive: true)
-                } 
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -185,7 +117,7 @@ struct MainTabView: View {
                         .fill(sessionAccentColor)
                         .frame(width: 8, height: 8)
                     TimerView(mode: mode,
-                              isActive: sessionState != .paused,
+                              isActive: timerStore.sessionState != .paused,
                               resetSignal: sessionResetSignal,
                               elapsedTime: elapsedTime)
                 }
@@ -224,33 +156,33 @@ struct MainTabView: View {
         // smooth motion for finger-drag **and** session state change
         .animation(.interactiveSpring(), value: dragOffset)
         .animation(.spring(response: 0.35, dampingFraction: 0.8),
-                   value: sessionState)
+                   value: timerStore.sessionState)
         .padding(.bottom, 4)
         .zIndex(2)
     }
 
     private var isCurrentTaskActive: Bool {
-        scheduledTasks.contains { task in
-            (task.startTime ... task.endTime).contains(now)
+        timerStore.scheduledTasks.contains { task in
+            (task.startTime ... task.endTime).contains(Date())
         }
     }
 
     private var isCurrentTaskWorkSession: Bool {
-        scheduledTasks.contains { task in
-            (task.startTime ... task.endTime).contains(now) && (task.category == .focus || task.category == .manualFocus)
-        } && sessionState == .work
+        timerStore.scheduledTasks.contains { task in
+            (task.startTime ... task.endTime).contains(Date()) && (task.category == .focus || task.category == .manualFocus)
+        } && timerStore.sessionState == .work
     }
 
     private var isCurrentTaskBreakSession: Bool {
-        scheduledTasks.contains { task in
-            (task.startTime ... task.endTime).contains(now) && (task.category == .freeTime || (task.category == .focus && sessionState != .paused))
+        timerStore.scheduledTasks.contains { task in
+            (task.startTime ... task.endTime).contains(Date()) && (task.category == .freeTime || (task.category == .focus && timerStore.sessionState != .paused))
         }
     }
 
     private func startTimer() {
         stopTimer()
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
-            let previousNow = now
+            let previousNow = Date()
             now = Date()
             updateTrail(previousNow: previousNow, currentNow: now)
         }
@@ -262,9 +194,9 @@ struct MainTabView: View {
     }
 
     private func updateTrail(previousNow: Date, currentNow: Date) {
-        guard let currentTask = scheduledTasks.first(where: { $0.contains(date: currentNow) })
+        guard let currentTask = timerStore.scheduledTasks.first(where: { $0.contains(date: currentNow) })
         else { return }
-        let isWorkSecond = (sessionState == .work)
+        let isWorkSecond = (timerStore.sessionState == .work)
         var intervals = taskTrails[currentTask.id] ?? []
         if let last = intervals.last,
            last.isFocus == isWorkSecond,
@@ -277,7 +209,7 @@ struct MainTabView: View {
     }
 
     private var currentTimerMode: TimerView.Mode? {
-        if isCurrentTaskWorkSession && sessionState != .paused {
+        if isCurrentTaskWorkSession && timerStore.sessionState != .paused {
             return .work
         } else if isCurrentTaskBreakSession {
             return .breakTime
@@ -289,7 +221,7 @@ struct MainTabView: View {
     private var timerBlockStartTime: Date? {
         let now = Date()
         let calendar = Calendar.current
-        if let currentBlock = scheduledTasks.first(where: { t in
+        if let currentBlock = timerStore.scheduledTasks.first(where: { t in
             calendar.compare(now, to: t.startTime, toGranularity: .minute) != .orderedAscending &&
             calendar.compare(now, to: t.endTime, toGranularity: .minute) == .orderedAscending
         }) {
@@ -313,7 +245,7 @@ struct MainTabView: View {
     private let breakAccent = Color(red: 0.1, green: 0.4, blue: 1.0)
 
     private var sessionAccentColor: Color {
-        switch sessionState {
+        switch timerStore.sessionState {
         case .work:         return workAccent
         case .breakSession: return breakAccent
         default:            return Color(.systemGray4)
@@ -322,17 +254,19 @@ struct MainTabView: View {
 
     private var buttonColor: Color { sessionAccentColor }
 
-    private var isGlowing: Bool { sessionState == .work && isCurrentTaskWorkSession }
+    private var isGlowing: Bool {
+        timerStore.sessionState == .work && isCurrentTaskWorkSession
+    }
 
     private var buttonYOffset: CGFloat {
-        switch sessionState {
+        switch timerStore.sessionState {
         case .none, .paused: return 0
         case .work, .breakSession: return -60
         }
     }
 
     private var sessionTimerMode: TimerView.Mode? {
-        switch sessionState {
+        switch timerStore.sessionState {
         case .work:         return .work
         case .breakSession: return .breakTime
         default:            return nil        // hide when .none or .paused
@@ -350,43 +284,40 @@ struct MainTabView: View {
         // Always close the running bucket before opening a new one
         closeRunningBucket()               // ① stop current bucket
         finaliseManualFocusIfRunning()     // ② clamp task duration
-        switch sessionState {              // handle *current* state
+        switch timerStore.sessionState {              // handle *current* state
         case .none:
             let start = Date()
-            now  = start                 // kick ‘now’ forward *before* the header draws
-            var tasks = scheduledTasks
+            now  = start                 // kick 'now' forward *before* the header draws
+            var tasks = timerStore.scheduledTasks
             tasks.append(
                 ScheduleTask(name: "ManualFocus", label: "Manual Focus Block",
                              startTime: start,
                              duration: 12 * 60 * 60, // 12 hours generous
                              category: .manualFocus)
             )
-            scheduledTasksByDate[normalizedDate(selectedDate)] = tasks
-            sessionState     = .work       // ③ move to next state
-            sessionStartTime = start
+            timerStore.scheduledTasksByDate[timerStore.normalizedDate(timerStore.selectedDate)] = tasks
+            timerStore.transition(to: .work)       // ③ move to next state
             // Only open the work bucket after closing the previous one
             openBucket(for: .work, customStartTime: start)
             timelineShouldResetScroll.toggle()
         case .work:
             now = Date()
-            sessionState     = .breakSession
-            sessionStartTime = now
+            timerStore.transition(to: .breakSession)
             // Only open the break bucket after closing the previous one
             openBucket(for: .breakSession)
             sessionResetSignal += 1
         case .breakSession, .paused:
             let start = Date()
-            now = start                  // kick ‘now’ forward on resume
-            var tasks = scheduledTasks
+            now = start                  // kick 'now' forward on resume
+            var tasks = timerStore.scheduledTasks
             tasks.append(
                 ScheduleTask(name: "ManualFocus", label: "Manual Focus Block",
                              startTime: start,
                              duration: 12 * 60 * 60, // 12 hours generous
                              category: .manualFocus)
             )
-            scheduledTasksByDate[normalizedDate(selectedDate)] = tasks
-            sessionState     = .work
-            sessionStartTime = start
+            timerStore.scheduledTasksByDate[timerStore.normalizedDate(timerStore.selectedDate)] = tasks
+            timerStore.transition(to: .work)
             // Only open the work bucket after closing the previous one
             openBucket(for: .work)
             sessionResetSignal += 1
@@ -395,32 +326,30 @@ struct MainTabView: View {
     }
 
     private func handleDrag(_ dy: CGFloat) {
-        if dy > 24, [.work, .breakSession].contains(sessionState) {
+        if dy > 24, [.work, .breakSession].contains(timerStore.sessionState) {
             // Always close the running bucket before opening a new one
             closeRunningBucket()           // stop work or break bucket
             finaliseManualFocusIfRunning() // clamp task duration
-            previousSessionState = sessionState
-            sessionState         = .paused
-            sessionStartTime     = nil
+            previousSessionState = timerStore.sessionState
+            timerStore.transition(to: .paused)
             // When paused, timer must be nil
             openBucket(for: .paused)       // nothing accrues while paused
-        } else if dy < -24, sessionState == .paused {
+        } else if dy < -24, timerStore.sessionState == .paused {
             now                  = Date()
             let start = now
-            now = start                  // kick ‘now’ forward on resume
-            var tasks = scheduledTasks
+            now = start                  // kick 'now' forward on resume
+            var tasks = timerStore.scheduledTasks
             tasks.append(
                 ScheduleTask(name: "ManualFocus", label: "Manual Focus Block",
                              startTime: start,
                              duration: 12 * 60 * 60, // 12 hours generous
                              category: .manualFocus)
             )
-            scheduledTasksByDate[normalizedDate(selectedDate)] = tasks
+            timerStore.scheduledTasksByDate[timerStore.normalizedDate(timerStore.selectedDate)] = tasks
             let resumed = previousSessionState ?? .work
             // Always close the running bucket before opening a new one
             closeRunningBucket()
-            sessionState         = resumed
-            sessionStartTime     = start
+            timerStore.transition(to: resumed)
             // Only open the work bucket after closing the previous one
             openBucket(for: resumed)       // reopen the right bucket
             sessionResetSignal  += 1
@@ -431,71 +360,41 @@ struct MainTabView: View {
 
     // Helper to get the current session's elapsed time in seconds
     private var currentSessionElapsedTime: Int {
-        guard let start = sessionStartTime,
-              sessionState == .work || sessionState == .breakSession else {
+        guard let start = timerStore.bucketStart,
+              timerStore.sessionState == .work || timerStore.sessionState == .breakSession else {
             return 0
         }
-        return Int(Date().timeIntervalSince(start))
+        return Int(timerStore.now.timeIntervalSince(start))
     }
 
     private func closeRunningBucket() {
-        guard let start = totalTimerStart else { return }
-        let elapsed = Date().timeIntervalSince(start)
-        switch runningBucketState {
-        case .work:
-            totalWorkTime  += elapsed
-        case .breakSession:
-            totalBreakTime += elapsed
-        default:
-            break
-        }
-        totalTimerStart = nil
-        runningBucketState = .none
+        // TimerStore.transition(to:) will call closeCurrentTrace()
+        // and move the elapsed seconds into the correct total.
+        // Nothing to do here any more.
     }
 
     /// Open a fresh bucket if the new state needs one.
     private func openBucket(for newState: SessionState, customStartTime: Date? = nil) {
         guard newState == .work || newState == .breakSession else {
-            totalTimerStart   = nil
-            runningBucketState = .none
+            timerStore.bucketStart   = nil
+            timerStore.runningBucket = .none
             return
         }
         // If a bucket is already open, close it first –– protects against double-open
-        if runningBucketState == newState, totalTimerStart != nil {
+        if timerStore.runningBucket == newState, timerStore.bucketStart != nil {
             closeRunningBucket()
         }
-        totalTimerStart   = customStartTime ?? Date()
-        runningBucketState = newState
-    }
-
-    /// Work total that is always correct, paused or running.
-    private var liveWorkTotal: TimeInterval {
-        var total = totalWorkTime                // frozen seconds
-        // Only accrue live delta while *really* in work and bucket is open
-        if sessionState == .work, runningBucketState == .work, let start = totalTimerStart {
-            total += Date().timeIntervalSince(start)
-        }
-        // Defensive: never show a negative or non-finite value
-        if !total.isFinite || total < 0 { return 0 }
-        return total
-    }
-
-    private var liveBreakTotal: TimeInterval {
-        var total = totalBreakTime
-        if sessionState == .breakSession, runningBucketState == .breakSession, let start = totalTimerStart {
-            total += Date().timeIntervalSince(start)
-        }
-        if !total.isFinite || total < 0 { return 0 }
-        return total
+        timerStore.bucketStart   = customStartTime ?? Date()
+        timerStore.runningBucket = newState
     }
 
     /// Debug assertion to ensure timer is only running in valid states
     private func assertTimerStateConsistency() {
-        if sessionState == .paused || sessionState == .none {
-            assert(totalTimerStart == nil, "Timer should not be running while paused or none")
+        if timerStore.sessionState == .paused || timerStore.sessionState == .none {
+            assert(timerStore.bucketStart == nil, "Timer should not be running while paused or none")
         }
-        if (sessionState == .work || sessionState == .breakSession) {
-            // It's OK for totalTimerStart to be nil if just switched, but not for long
+        if (timerStore.sessionState == .work || timerStore.sessionState == .breakSession) {
+            // It's OK for bucketStart to be nil if just switched, but not for long
         }
     }
 
@@ -505,23 +404,23 @@ struct MainTabView: View {
     }
 
     private func finaliseManualFocusIfRunning() {
-        if let idx = scheduledTasks.lastIndex(where: {
+        if let idx = timerStore.scheduledTasks.lastIndex(where: {
             $0.category == .manualFocus &&
             $0.startTime <= Date() &&
             $0.endTime   > Date()
         }) {
-            var tasks = scheduledTasks
+            var tasks = timerStore.scheduledTasks
             let start = tasks[idx].startTime
             let actual = Date().timeIntervalSince(start)
             tasks[idx] = tasks[idx].withDuration(actual)
-            scheduledTasksByDate[normalizedDate(selectedDate)] = tasks
+            timerStore.scheduledTasksByDate[timerStore.normalizedDate(timerStore.selectedDate)] = tasks
         }
     }
 
     // Pomodoro session generator
     private func applyPomodoroSessions(startTime: Date, endTime: Date, totalWorkDuration: TimeInterval) {
         // Clear previous Pomodoro blocks (optional: you may want to filter only Pomodoro blocks)
-        var tasks = scheduledTasks
+        var tasks = timerStore.scheduledTasks
         tasks.removeAll(where: { $0.name == "Pomodoro Focus" || $0.name == "Pomodoro Break" || $0.name == "Pomodoro Long Break" })
         
         let focusBlockDuration: TimeInterval = 25 * 60
@@ -584,13 +483,13 @@ struct MainTabView: View {
                 }
             }
         }
-        scheduledTasksByDate[normalizedDate(selectedDate)] = tasks
+        timerStore.scheduledTasksByDate[timerStore.normalizedDate(timerStore.selectedDate)] = tasks
     }
 
     // Huberman session generator
     private func applyHubermanSessions(startTime: Date, endTime: Date, totalWorkDuration: TimeInterval) {
         // Clear previous Huberman blocks (optional: you may want to filter only Huberman blocks)
-        var tasks = scheduledTasks
+        var tasks = timerStore.scheduledTasks
         tasks.removeAll(where: { $0.name == "Huberman Focus" || $0.name == "Huberman Break" })
         
         let focusBlockDuration: TimeInterval = 90 * 60
@@ -631,7 +530,7 @@ struct MainTabView: View {
                 current = breakEnd
             }
         }
-        scheduledTasksByDate[normalizedDate(selectedDate)] = tasks
+        timerStore.scheduledTasksByDate[timerStore.normalizedDate(timerStore.selectedDate)] = tasks
     }
 
     private var settingsView: some View {
@@ -654,13 +553,82 @@ struct MainTabView: View {
                         Text("Auto state switching between blocks")
                             .font(.headline)
                             .foregroundColor(.white)
-                        // Text("Automatically switch between work and break modes")
-                        //     .font(.subheadline)
-                        //     .foregroundColor(Color(white: 0.8))
                     }
                     Spacer()
                     Toggle("", isOn: $autoSwitchStates)
                         .labelsHidden()
+                }
+                .padding(.horizontal, 22)
+            }
+            .padding(.horizontal, 18)
+            // --- Reset Timers Card ---
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color(.systemGray6).opacity(0.18))
+                    .frame(height: 74)
+                HStack {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Reset timers")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                    }
+                    Spacer()
+                    Button(action: resetTimers) {
+                        Text("Reset")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .frame(width: 70, height: 36)
+                            .background(Color.red)
+                            .cornerRadius(8)
+                    }
+                }
+                .padding(.horizontal, 22)
+            }
+            .padding(.horizontal, 18)
+            // --- Delete all work and break blocks Card ---
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color(.systemGray6).opacity(0.18))
+                    .frame(height: 74)
+                HStack {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Delete all work and break blocks")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                    }
+                    Spacer()
+                    Button(action: deleteAllWorkAndBreakBlocks) {
+                        Text("Reset")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .frame(width: 70, height: 36)
+                            .background(Color.red)
+                            .cornerRadius(8)
+                    }
+                }
+                .padding(.horizontal, 22)
+            }
+            .padding(.horizontal, 18)
+            // --- Delete existing, current work and break traces Card ---
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color(.systemGray6).opacity(0.18))
+                    .frame(height: 74)
+                HStack {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Delete existing, current work and break traces")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                    }
+                    Spacer()
+                    Button(action: deleteAllTraces) {
+                        Text("Reset")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .frame(width: 70, height: 36)
+                            .background(Color.red)
+                            .cornerRadius(8)
+                    }
                 }
                 .padding(.horizontal, 22)
             }
@@ -672,35 +640,42 @@ struct MainTabView: View {
 
     // --- AUTO SWITCH HELPERS ---
     private func handleTapToWork() {
-        // This mimics the work state transition from handleTap
         closeRunningBucket()
         finaliseManualFocusIfRunning()
-        sessionState = .work
-        sessionStartTime = now
+        let now = Date()
+        timerStore.transition(to: .work)
+        // Only open the work bucket after closing the previous one
         openBucket(for: .work, customStartTime: now)
-        sessionResetSignal += 1
+        sessionResetSignal += 1                // forces TimerView to reset to 00:00
     }
 
     private func handleTapToBreak() {
         // This mimics the break state transition from handleTap
         closeRunningBucket()
         finaliseManualFocusIfRunning()
-        sessionState = .breakSession
-        sessionStartTime = now
+        timerStore.transition(to: .breakSession)
+        // Only open the break bucket after closing the previous one
         openBucket(for: .breakSession, customStartTime: now)
         sessionResetSignal += 1
     }
 
-    // Helper to normalize a date to midnight (for dictionary keys)
-    private func normalizedDate(_ date: Date) -> Date {
-        let cal = Calendar.current
-        return cal.startOfDay(for: date)
+    private func resetTimers() {
+        timerStore.hardResetTimers()
+        sessionResetSignal += 1 // keeps the arrow-button timer at 00:00
     }
 
-    // Helper to get or set tasks for the selected date
-    private var scheduledTasks: [ScheduleTask] {
-        get { scheduledTasksByDate[normalizedDate(selectedDate)] ?? [] }
-        set { scheduledTasksByDate[normalizedDate(selectedDate)] = newValue }
+    // --- DELETE ALL TRACES ---
+    private func deleteAllTraces() {
+        timerStore.traces.removeAll()
+        timerStore.saveTraces()
+    }
+
+    // --- DELETE ALL WORK AND BREAK BLOCKS ---
+    private func deleteAllWorkAndBreakBlocks() {
+        var tasks = timerStore.scheduledTasks
+        tasks.removeAll { $0.category == .focus || $0.category == .manualFocus || $0.category == .freeTime }
+        timerStore.scheduledTasks = tasks
+        timerStore.save()
     }
 }
 

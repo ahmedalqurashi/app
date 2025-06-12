@@ -1,6 +1,6 @@
 import SwiftUI
 
-public struct ScheduleTask: Identifiable, Equatable {
+public struct ScheduleTask: Identifiable, Equatable, Codable {
     public let id: UUID
     public let name: String
     public let label: String
@@ -26,7 +26,7 @@ public struct ScheduleTask: Identifiable, Equatable {
     }
 }
 
-public enum TaskCategory: String, CaseIterable {
+public enum TaskCategory: String, CaseIterable, Codable {
     case focus = "Focus"
     case admin = "Admin"
     case freeTime = "Free Time"

@@ -14,6 +14,7 @@ struct TimelineView<Content: View>: View {
     @State private var debugHour: Double = 9.0 // Start at 9 AM
     @State private var scrollProxyRef: ScrollViewProxy?
     @Environment(\.scenePhase) private var scenePhase
+    @EnvironmentObject private var timerStore: TimerStore
     private var currentTimeMarkerID: String { "currentTime-\(Int(Date().timeIntervalSince1970))" }
     
     init(tasks: [ScheduleTask], sessionState: SessionState, selectedDate: Date, @ViewBuilder content: @escaping (ScheduleTask, Date, Bool, Bool) -> Content) {
@@ -100,6 +101,39 @@ struct TimelineView<Content: View>: View {
 
                     ZStack(alignment: .top) {
                         GridLines(slots: slotsInDay, hourHeight: hourHeight)
+                        // --- COMPLETED TRACES --------------------------------------------------
+                        ForEach(timerStore.traces
+                                .filter { calendar.isDate($0.start, inSameDayAs: selectedDate) }) { t in
+                            let yStart = timeToPosition(t.start)
+                            let yEnd   = timeToPosition(t.end)
+                            let color  = t.isFocus
+                                        ? Color(red: 0.6, green: 0.1, blue: 1.0)   // purple
+                                        : Color(red: 0.1, green: 0.4, blue: 1.0)   // blue
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(color.opacity(0.24))
+                                .frame(maxWidth: .infinity)
+                                .frame(height: max(2, yEnd - yStart))
+                                .offset(y: yStart)
+                                .zIndex(1)                 // below the live trace, above grid lines
+                        }
+                        // --- LIVE TRACE (current bucket) --------------------------------------
+                        if Calendar.current.isDateInToday(selectedDate),
+                           let bucketStart = timerStore.bucketStart,
+                           (timerStore.sessionState == .work || timerStore.sessionState == .breakSession)
+                        {
+                            let color  = timerStore.sessionState == .work
+                                         ? Color(red: 0.6, green: 0.1, blue: 1.0)
+                                         : Color(red: 0.1, green: 0.4, blue: 1.0)
+                            let yStart = timeToPosition(bucketStart)
+                            let yEnd   = timeToPosition(timerStore.now)
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(color.opacity(0.28))
+                                .frame(maxWidth: .infinity)
+                                .frame(height: max(2, yEnd - yStart))
+                                .offset(y: yStart)
+                                .zIndex(2)                 // sits on top of finished traces
+                                .animation(.linear(duration: 1), value: timerStore.now)
+                        }
                         TaskLayer(
                             tasks: tasks.sorted { $0.startTime < $1.startTime },
                             now: now,
@@ -152,7 +186,7 @@ struct TaskBlockView: View {
             // Render the trail as vertical highlights
             GeometryReader { geo in
                 let height = geo.size.height
-                ForEach(0..<trail.count, id: \ .self) { i in
+                ForEach(0..<trail.count, id: \.self) { i in
                     let interval = trail[i]
                     let intervalStart = max(interval.start, taskStart)
                     let intervalEnd = min(interval.end, taskEnd)
